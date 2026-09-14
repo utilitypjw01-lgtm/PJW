@@ -1,0 +1,2810 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>ระบบติดตามสุขภาพยูทิลิตี้ &amp; พลังงาน — PJW Auto EV</title>
+
+<!-- "Add to Home Screen" hints for iOS Safari and Android Chrome.
+     This is a lightweight home-screen shortcut, not a full offline-capable
+     PWA (no service worker / manifest.json bundled in this single file),
+     since the app depends on CDN scripts and needs a live connection the
+     first time it loads on each phone. -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="PJW Utility" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#0F2942" />
+
+<!-- React 18 -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- Recharts (official UMD build) + its required externals -->
+<script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+<script src="https://unpkg.com/react-is/umd/react-is.production.min.js"></script>
+<script src="https://unpkg.com/recharts@2/umd/Recharts.js"></script>
+<!-- Lucide (vanilla) — used to render the same icon set as the original lucide-react code -->
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<!-- Babel standalone — transforms the in-browser JSX below at load time -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<!-- Tailwind CDN — the app is styled entirely with Tailwind utility classes -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<script type="importmap"> {
+    "imports": {
+      "react": "https://esm.sh/react@18.2.0",
+      "react-dom": "https://esm.sh/react-dom@18.2.0",
+      "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+      "react/jsx-runtime": "https://esm.sh/react@18.2.0/jsx-runtime"
+    }
+  }
+</script>
+
+<style>
+  html, body { margin: 0; padding: 0; background: #F5F7FA; }
+  #root { min-height: 100vh; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+</style>
+
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-type="module" data-presets="react,env">
+
+// ===========================================================================
+// Storage polyfill — this file was originally built as a Claude "Artifact",
+// which provides a shared window.storage.get/set/list API automatically.
+// Opened as a plain HTML file on a phone, that API does not exist, so this
+// polyfill backs it with the browser's localStorage instead.
+//
+// IMPORTANT LIMITATION: localStorage is PER DEVICE / PER BROWSER. Unlike the
+// original Claude Artifact version (where "shared: true" meant every
+// teammate saw the same data), each phone that opens this HTML file keeps
+// its own separate copy of the data. Nothing is synced between phones
+// automatically. Use the "Export / Import ข้อมูล" buttons in the app header
+// to move data between phones (e.g. export on one phone, send the file,
+// import on another) or to keep a manual backup.
+// ===========================================================================
+(function () {
+  const PREFIX = "pjw_utility_";
+  window.storage = {
+    async get(key) {
+      const v = window.localStorage.getItem(PREFIX + key);
+      return v === null ? null : { key, value: v };
+    },
+    async set(key, value) {
+      window.localStorage.setItem(PREFIX + key, value);
+      return { key, value };
+    },
+    async delete(key) {
+      window.localStorage.removeItem(PREFIX + key);
+      return { key, deleted: true };
+    },
+    async list(prefix) {
+      const p = PREFIX + (prefix || "");
+      const keys = [];
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (k && k.indexOf(p) === 0) keys.push(k.slice(PREFIX.length));
+      }
+      return { keys };
+    },
+  };
+
+  // Export every saved key as a single downloadable JSON file.
+  window.__pjwExportData = function () {
+    const dump = {};
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && k.indexOf(PREFIX) === 0) {
+        dump[k.slice(PREFIX.length)] = window.localStorage.getItem(k);
+      }
+    }
+    const blob = new Blob([JSON.stringify(dump, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `pjw-utility-backup-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Import a previously exported JSON file, merging it into this phone's
+  // localStorage (existing keys with the same name are overwritten).
+  window.__pjwImportData = function (file, onDone) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        Object.keys(data).forEach((k) => {
+          window.localStorage.setItem(PREFIX + k, data[k]);
+        });
+        onDone(true, Object.keys(data).length);
+      } catch (e) {
+        onDone(false, 0);
+      }
+    };
+    reader.readAsText(file);
+  };
+})();
+
+// ===========================================================================
+// Icon shim — renders the same Lucide icon set the app was built with,
+// using the vanilla `lucide` package (loaded above) instead of the
+// React-specific `lucide-react` package, since only the vanilla build has a
+// simple CDN/UMD distribution. Each icon keeps the same name and the same
+// {size, color, className} usage the rest of the app already relies on.
+// ===========================================================================
+function LucideIcon({ name, size = 16, color = "currentColor", className = "", style }) {
+  const data = window.lucide && window.lucide.icons ? window.lucide.icons[name] : null;
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    if (!ref.current || !data) return;
+    ref.current.innerHTML = "";
+    const svg = window.lucide.createElement(data);
+    svg.setAttribute("width", size);
+    svg.setAttribute("height", size);
+    svg.setAttribute("stroke", color);
+    ref.current.appendChild(svg);
+  }, [name, size, color]);
+  if (!data) return null;
+  return React.createElement("span", {
+    ref,
+    className,
+    style: { display: "inline-flex", lineHeight: 0, ...style },
+  });
+}
+
+const Zap = (p) => <LucideIcon name="Zap" {...p} />;
+const Wind = (p) => <LucideIcon name="Wind" {...p} />;
+const Snowflake = (p) => <LucideIcon name="Snowflake" {...p} />;
+const Fan = (p) => <LucideIcon name="Fan" {...p} />;
+const Gauge = (p) => <LucideIcon name="Gauge" {...p} />;
+const ArrowUpDown = (p) => <LucideIcon name="ArrowUpDown" {...p} />;
+const Construction = (p) => <LucideIcon name="Construction" {...p} />;
+const CheckCircle2 = (p) => <LucideIcon name="CheckCircle2" {...p} />;
+const XCircle = (p) => <LucideIcon name="XCircle" {...p} />;
+const Calendar = (p) => <LucideIcon name="Calendar" {...p} />;
+const Save = (p) => <LucideIcon name="Save" {...p} />;
+const TrendingUp = (p) => <LucideIcon name="TrendingUp" {...p} />;
+const AlertTriangle = (p) => <LucideIcon name="AlertTriangle" {...p} />;
+const ChevronDown = (p) => <LucideIcon name="ChevronDown" {...p} />;
+const ChevronRight = (p) => <LucideIcon name="ChevronRight" {...p} />;
+const ChevronLeft = (p) => <LucideIcon name="ChevronLeft" {...p} />;
+const Activity = (p) => <LucideIcon name="Activity" {...p} />;
+const ClipboardList = (p) => <LucideIcon name="ClipboardList" {...p} />;
+const HistoryIcon = (p) => <LucideIcon name="History" {...p} />;
+const LayoutDashboard = (p) => <LucideIcon name="LayoutDashboard" {...p} />;
+const MapPinned = (p) => <LucideIcon name="MapPinned" {...p} />;
+const CalendarDays = (p) => <LucideIcon name="CalendarDays" {...p} />;
+const Factory = (p) => <LucideIcon name="Factory" {...p} />;
+const BarChart3 = (p) => <LucideIcon name="BarChart3" {...p} />;
+const Minus = (p) => <LucideIcon name="Minus" {...p} />;
+const Settings = (p) => <LucideIcon name="Settings" {...p} />;
+const PieChartIcon = (p) => <LucideIcon name="PieChart" {...p} />;
+const Leaf = (p) => <LucideIcon name="Leaf" {...p} />;
+const Target = (p) => <LucideIcon name="Target" {...p} />;
+const BatteryCharging = (p) => <LucideIcon name="BatteryCharging" {...p} />;
+
+// React hooks used throughout the app (originally `import { useState, ... } from "react"`)
+const { useState, useEffect, useCallback, useMemo } = React;
+
+// Recharts components (originally `import { ... } from "recharts"`)
+const {
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  Legend, ResponsiveContainer, PieChart, Pie, Cell, ComposedChart, Area,
+} = Recharts;
+
+// ---------------------------------------------------------------------------
+// Checklist templates transcribed from the company's actual Daily Check Sheet
+// forms (FR-MAN-C19-001 / FR-MAN-C09). Each item: id, item, method, standard.
+// ---------------------------------------------------------------------------
+const CHECKLIST_TEMPLATES = {
+  compressor: [
+    { id: "c1", item: "ฟิลเตอร์กรองอากาศ", method: "ถอดออกมาเป่าทำความสะอาด", standard: "ไม่มีฝุ่น ฟิลเตอร์ไม่ตัน" },
+    { id: "c2", item: "มอเตอร์ขับสกรู", method: "เป่าทำความสะอาด ดูจุดที่หลุดหรือหลวม", standard: "ไม่มีฝุ่น ไม่มีคราบน้ำมัน" },
+    { id: "c3", item: "สกรู", method: "ฟังเสียง", standard: "ไม่มีเสียงดัง" },
+    { id: "c4", item: "ถังแยกน้ำมันออกจากลม", method: "ตรวจเช็คลมรั่วและน้ำมันรั่ว ทำความสะอาด", standard: "ลมไม่รั่ว ไม่มีน้ำมันรั่ว" },
+    { id: "c5", item: "ตาแมวดูระดับน้ำมัน", method: "ตรวจเช็คระดับน้ำมันที่ตาแมว", standard: "ใส มีน้ำมันอยู่ระดับ 3 ใน 4 ของตาแมว" },
+    { id: "c6", item: "Coupling และยอย", method: "ฟังเสียง", standard: "ไม่มีเสียงดัง" },
+    { id: "c7", item: "ฟิลคอยล์ระบายความร้อน", method: "เป่าฝุ่นทำความสะอาด", standard: "ไม่มีฝุ่น ลมระบายผ่านได้สะดวก" },
+    { id: "c8", item: "มอเตอร์พัดลมระบายความร้อน", method: "เป่าฝุ่นทำความสะอาด ฟังเสียงผิดปกติ", standard: "ไม่มีฝุ่น ไม่มีเสียงดัง" },
+    { id: "c9", item: "แรงดันลมปล่อยออก", method: "เช็คและบันทึกค่าแรงดัน", standard: "7-8 บาร์", numeric: true },
+    { id: "c10", item: "อุณหภูมิ T1 (อุณหภูมิอัดออก)", method: "เช็คค่าและบันทึกค่าอุณหภูมิ", standard: "T1 < Max 102 องศาเซลเซียส", numeric: true },
+    { id: "c11", item: "อุณหภูมิ T2 (อุณหภูมิปล่อยออก)", method: "เช็คค่าและบันทึกค่าอุณหภูมิ", standard: "T2 < Max 95 องศาเซลเซียส", numeric: true },
+    { id: "c12", item: "เวลา Load(hr) / Unload(hr)", method: "เช็คและบันทึกค่าเวลา", standard: "ตัวเลขเปลี่ยนแปลงเมื่อเครื่องรัน" },
+    { id: "c13", item: "ชั่วโมงการทำงาน", method: "เช็คและบันทึกค่าเวลา", standard: "ตัวเลขเปลี่ยนแปลงเมื่อเครื่องรัน" },
+    { id: "c14", item: "กระแสเครื่องจักร (A)", method: "เช็คและบันทึกค่ากระแส", standard: "กระแสไม่เกิน Name Plate", numeric: true },
+    { id: "c15", item: "ถังเก็บลม (Receiver)", method: "เช็คลมรั่วและ Drain น้ำ ทำความสะอาด", standard: "ไม่มีน้ำขัง ไม่มีลมรั่ว" },
+    { id: "c16", item: "Air Dryer & Line Filter", method: "เช็คลมรั่วและ Drain น้ำ ทำความสะอาด", standard: "ไม่มีฝุ่นและคราบน้ำมัน ไม่มีน้ำ ลมไม่รั่ว" },
+    { id: "c17", item: "After Cooler", method: "เช็คลมรั่วและทำความสะอาด", standard: "ไม่มีฝุ่นและคราบน้ำมัน ไม่มีน้ำ ลมไม่รั่ว" },
+  ],
+  coolingtower: [
+    { id: "ct1", item: "สภาพโดยรอบคูลลิ่งทาวเวอร์", method: "ตรวจสอบบริเวณโดยรอบตัวคูลลิ่ง", standard: "ไม่มีน้ำล้นในบริเวณโดยรอบ" },
+    { id: "ct2", item: "อ่างรองรับน้ำ", method: "ตรวจเช็คสภาพใต้ตัวคูลลิ่ง", standard: "ไม่รั่ว" },
+    { id: "ct3", item: "ครีบระบายความร้อน", method: "จับสภาพของครีบ", standard: "ไม่เปื่อยยุ่ยหรือร่อนออกจากแผง" },
+    { id: "ct4", item: "ลูกลอยในถังน้ำ", method: "ตรวจสอบการยกตัวของลูกลอย", standard: "ยกเปิด จมปิด" },
+    { id: "ct5", item: "ใบพัดลมระบายอากาศ", method: "ดูลักษณะการหมุนของใบ", standard: "หมุนได้ศูนย์ ไม่แตกหรือหัก" },
+    { id: "ct6", item: "มอเตอร์ขับใบพัด", method: "ดูทิศทางและการหมุนของมอเตอร์", standard: "ทำงานได้ปกติ เสียงไม่ดังเวลาทำงาน" },
+    { id: "ct7", item: "ถังปรับสภาพน้ำ", method: "ตรวจสอบสภาพถังโดยรอบ", standard: "มีน้ำยาอยู่ ไม่รั่วซึม" },
+    { id: "ct8", item: "ท่อน้ำล้น", method: "ตรวจสอบสภาพท่อโดยรอบ", standard: "ไม่มีรอยร้าวหรือแตก" },
+    { id: "ct9", item: "วาวล์", method: "โยกวาวล์ทดสอบการเปิดปิด", standard: "สามารถเปิดปิดได้" },
+    { id: "ct10", item: "Flexible join", method: "ตรวจสอบการยึดแน่นของสกรูกับอุปกรณ์", standard: "ไม่มีการรั่วซึมของน้ำ" },
+    { id: "ct11", item: "ถังสำรองน้ำ", method: "ตรวจเช็คระดับน้ำในถัง", standard: "มีน้ำในถังสำรองในระดับที่กำหนด" },
+    { id: "ct12", item: "อุณหภูมิน้ำเข้า", method: "ตรวจสอบอุณหภูมิขาเข้า", standard: "30-38 องศาเซลเซียส", numeric: true },
+    { id: "ct13", item: "อุณหภูมิน้ำออก", method: "ตรวจสอบอุณหภูมิขาออก", standard: "28-35 องศาเซลเซียส", numeric: true },
+  ],
+  chiller: [
+    { id: "ch1", item: "ความสะอาด Chiller", method: "ทำความสะอาด", standard: "ไม่มีฝุ่น" },
+    { id: "ch2", item: "ระบบท่อ", method: "ตรวจเช็คระบบท่อส่งน้ำทั้งหมด", standard: "ไม่รั่วซึม ไม่มีรอยร้าว" },
+    { id: "ch3", item: "ตรวจสอบความผิดปกติ", method: "ตรวจเช็ครอบเครื่อง", standard: "ไม่มีรอยรั่ว ไม่มีน้ำหยด ไม่มีฝุ่น" },
+    { id: "ch4", item: "ค่าอุณหภูมิที่เซ็ตไว้", method: "กดเช็คแล้วเช็คที่ตัวควบคุม", standard: "16-17 องศา", numeric: true },
+    { id: "ch5", item: "ค่าอุณหภูมิน้ำเข้า Evap", method: "ดูจากหน้าจอและบันทึกค่า", standard: "16-18 องศา", numeric: true },
+    { id: "ch6", item: "ค่าอุณหภูมิน้ำออกจาก Evap", method: "ดูจากหน้าจอและบันทึกค่า", standard: "16-17 องศา", numeric: true },
+    { id: "ch7", item: "ค่าอุณหภูมิน้ำ Cooling เข้า", method: "ดูจากหน้าจอและบันทึกค่า", standard: "28-32 องศา", numeric: true },
+    { id: "ch8", item: "ค่าอุณหภูมิน้ำ Cooling ออก", method: "ดูจากหน้าจอและบันทึกค่า", standard: "35-37 องศา", numeric: true },
+    { id: "ch9", item: "ค่ากระแสไฟฟ้าปั๊มน้ำ Condenser", method: "คลิปแอมป์", standard: "ไม่เกิน Name Plate", numeric: true },
+    { id: "ch10", item: "ค่าแรงดันน้ำปั๊มน้ำ Condenser", method: "ดูจาก Pressure Gage", standard: "ค่าไม่ตกอยู่ที่ 0 เมื่อปั๊มทำงาน" },
+    { id: "ch11", item: "ค่ากระแสไฟฟ้าปั๊มน้ำ Evaporator", method: "ดูค่าและบันทึกค่า", standard: "ไม่เกิน Name Plate", numeric: true },
+    { id: "ch12", item: "ค่าแรงดันน้ำปั๊มน้ำ Evaporator", method: "ดูจาก Pressure Gage", standard: "ค่าไม่ตกอยู่ที่ 0 เมื่อปั๊มทำงาน" },
+    { id: "ch13", item: "แรงดันน้ำเข้า", method: "ดูเกจวัดแรงดันน้ำเข้า", standard: "แรงดัน 2-4 บาร์", numeric: true },
+    { id: "ch14", item: "แรงดันน้ำออก", method: "ดูเกจวัดแรงดันน้ำออก", standard: "แรงดัน 2-4 บาร์", numeric: true },
+    { id: "ch15", item: "Control Box", method: "เป่าฝุ่นทำความสะอาด", standard: "ไม่มีฝุ่น" },
+    { id: "ch16", item: "Magnetic Contactor", method: "ฟังเสียง ตรวจสอบรอยไหม้ ขันแน่น", standard: "เสียงไม่ดัง ไม่มีรอยไหม้ ไม่หลุดหลวม" },
+    { id: "ch17", item: "Breaker", method: "ฟังเสียง ตรวจสอบรอยไหม้ ขันแน่น", standard: "เสียงไม่ดัง ไม่มีรอยไหม้ ไม่หลุดหลวม" },
+    { id: "ch18", item: "สายไฟ", method: "ตรวจสอบสภาพสายไฟ", standard: "ไม่แตกร้าว ไม่หลุดหลวม ไม่มีรอยไหม้" },
+  ],
+  mdb: [
+    { id: "m1", item: "พื้นที่บริเวณโดยรอบ", method: "ตรวจสอบสิ่งกีดขวางบริเวณโดยรอบ", standard: "ไม่มีสิ่งกีดขวางภายในรัศมี" },
+    { id: "m2", item: "ตู้ควบคุมไฟฟ้า", method: "เปิดดู สังเกตไฟแสดงการทำงาน", standard: "ไฟแสดงติด ปุ่มกดไม่ชำรุด" },
+    { id: "m3", item: "การคายประจุไฟฟ้า", method: "เปิดดู สังเกตไฟแสดงการทำงาน", standard: "ไฟเขียวติดขณะเก็บประจุ ไฟเขียวดับเมื่อประจุเต็ม" },
+    { id: "m4", item: "เช็ค Capbank", method: "ดูและดมกลิ่น", standard: "ไม่มีการช็อต ไม่เสียหาย ไม่มีกลิ่น/รอยไหม้" },
+    { id: "m5", item: "พัดลมระบายอากาศ", method: "ดูและดมกลิ่น", standard: "พัดลมทำงานตลอด ไม่มีกลิ่นไหม้ ไม่ช็อต" },
+    { id: "m6", item: "อุณหภูมิตู้", method: "วัดด้วย Infrared", standard: "27-40 องศา", numeric: true },
+    { id: "m7", item: "แรงดันเฟส 1+2", method: "วัดด้วยเครื่องวัด", standard: "380 V", numeric: true },
+    { id: "m8", item: "แรงดันเฟส 2+3", method: "วัดด้วยเครื่องวัด", standard: "380 V", numeric: true },
+    { id: "m9", item: "แรงดันเฟส 3+1", method: "วัดด้วยเครื่องวัด", standard: "380 V", numeric: true },
+    { id: "m10", item: "แรงดันไฟฟ้า L+N", method: "วัดด้วยเครื่องวัด", standard: "220 V", numeric: true },
+    { id: "m11", item: "กระแสไฟ", method: "วัดและบันทึกค่ากระแสไฟ", standard: "ไม่เกิน Name Plate", numeric: true },
+  ],
+  lift: [
+    { id: "l1", item: "ประตูลิฟท์", method: "เปิด-ปิด ประตูลิฟท์", standard: "เปิด-ปิดได้สะดวก ไม่ชำรุด" },
+    { id: "l2", item: "สวิตซ์ขึ้น-ลง", method: "กดปุ่มเรียกลิฟท์ขึ้น-ลง", standard: "ลิฟท์ทำงานตามคำสั่ง" },
+    { id: "l3", item: "ตู้ Control", method: "เปิดตรวจสอบภายในตู้ ทำความสะอาด", standard: "ไม่สกปรก ไม่สึกหรอ" },
+    { id: "l4", item: "กระปุกน้ำมันหล่อลื่น", method: "ดูระดับน้ำมันที่กระปุก", standard: "น้ำมันอยู่ระดับแถบเขียว (เติมหากถึงระดับเหลือง)" },
+    { id: "l5", item: "สายสลิง", method: "มองดูสายสลิงตลอดเส้น", standard: "ไม่แตก ไม่ขาด ไม่มีรอยสึกหรอ" },
+    { id: "l6", item: "Hook", method: "ตรวจสอบสภาพของ Hook", standard: "มีตัวล็อก ไม่แตกหัก ไม่สึกหรอ" },
+    { id: "l7", item: "ตัวลอกสลิง", method: "ตรวจสอบสภาพของตัวลอกสลิง", standard: "ไม่แตกชำรุด ไม่สึกหรอ" },
+    { id: "l8", item: "Limit Switch ประตู", method: "ตรวจสอบสภาพ Limit Switch", standard: "ประตูปิดสนิทไฟดับ / ปิดไม่สนิทไฟติด" },
+    { id: "l9", item: "ปุ่ม Emergency Stop", method: "กดทดสอบการทำงาน", standard: "กดแล้วลิฟท์ต้องหยุดทำงานทันที" },
+    { id: "l10", item: "โครงสร้างของลิฟท์", method: "ตรวจดูสภาพโครงสร้างเหล็ก", standard: "ไม่บิดตัว ไม่แตกหัก ไม่สึกหรอ" },
+    { id: "l11", item: "สัญญาณ Alarm", method: "ทดสอบขณะเครื่องทำงาน", standard: "สัญญาณเสียงและไฟต้องติด" },
+  ],
+  crane: [
+    { id: "cr1", item: "เบรกขึ้น-ลง", method: "ทดลองยกขึ้นและหยุด", standard: "เบรกหยุดรอกได้เร็ว ไม่ไหล" },
+    { id: "cr2", item: "มอเตอร์ยกแนวดิ่ง", method: "ฟังเสียงของมอเตอร์", standard: "ไม่มีเสียงดังผิดปกติ" },
+    { id: "cr3", item: "พูเล่สลิง", method: "ตรวจดูพูเล่สลิงทั้งหมด", standard: "ไม่ฟีด ไม่มีรอยแตกร้าว" },
+    { id: "cr4", item: "สลิง", method: "ตรวจดูสายสลิงทั้งเส้นหรือใช้ผ้าลูบ", standard: "ไม่มีรอยแตกหรือฉีกขาด" },
+    { id: "cr5", item: "Hook", method: "ตรวจสอบตะขอและตัว Lock", standard: "ไม่แตกร้าว ตัว Lock ใช้งานได้ปกติ" },
+    { id: "cr6", item: "มอเตอร์วิ่งซ้าย-ขวา", method: "ฟังเสียงของมอเตอร์", standard: "ไม่มีเสียงดังผิดปกติ" },
+    { id: "cr7", item: "ระบบเบรก", method: "ทดลองเดินเครนและหยุด", standard: "เบรกหยุดรอกได้เร็ว ไม่ไหล" },
+    { id: "cr8", item: "ชุดเกียร์ขับ", method: "ทดสอบเดินเครน", standard: "ไม่มีเสียงดังผิดปกติ" },
+    { id: "cr9", item: "มอเตอร์วิ่งยาว", method: "ฟังเสียงของมอเตอร์", standard: "ไม่มีเสียงดังผิดปกติ" },
+    { id: "cr10", item: "สวิตช์ปุ่มกด", method: "ทดสอบการทำงานของปุ่มกด", standard: "สั่งงานถูกต้อง ไม่ชำรุดเสียหาย" },
+    { id: "cr11", item: "การเคลื่อนที่ขึ้น-ลง", method: "กดปุ่มเคลื่อนที่ขึ้น-ลง", standard: "ไม่มีเสียงสัญญาณผิดปกติขณะเคลื่อนที่" },
+    { id: "cr12", item: "การเคลื่อนที่ซ้าย-ขวา", method: "กดปุ่มเคลื่อนที่ซ้าย-ขวา", standard: "ไม่มีเสียงสัญญาณผิดปกติขณะเคลื่อนที่" },
+    { id: "cr13", item: "การเคลื่อนที่ไปข้างหน้า-หลัง", method: "กดปุ่มเคลื่อนที่หน้า-หลัง", standard: "ไม่มีเสียงสัญญาณผิดปกติขณะเคลื่อนที่" },
+  ],
+  // Generic starter PM checklist for a Battery Energy Storage System (BESS),
+  // based on common O&M practice for containerized/cabinet Li-ion BESS
+  // (BMS monitoring, thermal management, fire safety). No specific unit
+  // codes or vendor data were available for this site, so this list is a
+  // starting point — replace the standard/method text with whatever your
+  // BESS vendor's O&M manual specifies before relying on it operationally.
+  bess: [
+    { id: "b1", item: "ตู้/คอนเทนเนอร์ BESS ภายนอก", method: "ตรวจสอบความสะอาด รอยรั่วซึม ความเสียหายภายนอก", standard: "ไม่มีคราบน้ำ ไม่มีรอยบุบ ไม่มีสัญญาณกัดกร่อน" },
+    { id: "b2", item: "สถานะ BMS (Battery Management System)", method: "ดูหน้าจอ/แอปของผู้ผลิต ตรวจสอบ Alarm/Fault log", standard: "ไม่มี Alarm หรือ Fault ค้าง" },
+    { id: "b3", item: "State of Charge (SOC)", method: "อ่านค่าจากหน้าจอ BMS และบันทึก", standard: "อยู่ในช่วงที่ผู้ผลิตกำหนด (ทั่วไปหลีกเลี่ยง 0% หรือ 100% ต่อเนื่อง)", numeric: true },
+    { id: "b4", item: "อุณหภูมิภายในตู้ราย Rack/Module", method: "อ่านค่าจากหน้าจอ BMS หรือวัดด้วย Infrared", standard: "ตามช่วงอุณหภูมิที่ผู้ผลิตกำหนด (ทั่วไป 15-35°C)", numeric: true },
+    { id: "b5", item: "ระบบระบายความร้อน/HVAC ประจำตู้", method: "ฟังเสียง ตรวจสอบลมออก", standard: "ทำงานปกติ ไม่มีเสียงผิดปกติ ลมไหลออกสม่ำเสมอ" },
+    { id: "b6", item: "ระบบดับเพลิง/ตรวจจับควัน", method: "ตรวจสอบไฟแสดงสถานะพร้อมใช้งาน", standard: "ไฟแสดงสถานะพร้อมใช้งาน ไม่มีสัญญาณเตือน" },
+    { id: "b7", item: "สายไฟ/บัสบาร์ และจุดต่อ", method: "ตรวจสอบความแน่น ร่องรอยความร้อนสูงเกิน (hot spot)", standard: "ไม่หลวม ไม่มีรอยไหม้หรือคราบดำ" },
+    { id: "b8", item: "ค่าฉนวน (Insulation Resistance)", method: "วัดตามรอบที่ผู้ผลิต/มาตรฐานกำหนด (ถ้ามีอุปกรณ์วัด)", standard: "ไม่ต่ำกว่าค่าที่ผู้ผลิตกำหนด" },
+    { id: "b9", item: "พัดลม/แผงระบายอากาศภายนอกตู้", method: "เป่าฝุ่นทำความสะอาด ฟังเสียงผิดปกติ", standard: "ไม่มีฝุ่นอุดตัน ไม่มีเสียงผิดปกติ" },
+    { id: "b10", item: "ป้ายเตือน/อุปกรณ์ความปลอดภัยประจำจุด", method: "ตรวจสอบป้ายเตือน ถังดับเพลิง อุปกรณ์ PPE ประจำจุด", standard: "ครบถ้วน อยู่ในตำแหน่งที่กำหนด ยังไม่หมดอายุ" },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// Equipment master (unit inventory). Zone mapping follows the plant/zone
+// convention already used for MDB1(A) MDB2,3(B) MDB7,8(C) MDB5,6(D) MDB9(E).
+//
+// UPDATED: compressor / chiller / cooling-tower / crane codes below were
+// re-transcribed from the site's actual "Facility & Utility Support PM"
+// whiteboard (photo provided by the user) to replace earlier placeholder
+// codes. Two new categories (Air Dryer, Hoist/Rigging) were added because
+// the whiteboard tracks them as their own PM lines, separate from the
+// Air Compressor checklist's "Air Dryer & Line Filter" sub-item.
+//
+// TRANSCRIPTION CONFIDENCE: the whiteboard photo has handwriting that is
+// partly hard to read (glare, overlapping ink). Items with a "note" flagged
+// "โปรดยืนยัน" were the least certain and should be checked against the
+// physical board. AD-D009 is kept exactly as written even though its code
+// follows the "D" numbering sequence while its Fac. column shows zone "E" —
+// the same kind of cross-zone code mismatch seen earlier with PI211 — so it
+// is flagged rather than silently "corrected" to one zone or the other.
+// ---------------------------------------------------------------------------
+const CATEGORIES = [
+  {
+    key: "compressor", label: "Air Compressor", labelTh: "เครื่องอัดลม",
+    iconKey: "Wind", color: "#C0722A", checklistKey: "compressor",
+    items: [
+      { code: "AC-A001", zone: "A" },
+      { code: "AC-A002", zone: "A" },
+      { code: "AC-B003", zone: "B" },
+      { code: "AC-B004", zone: "B" },
+      { code: "AC-D005", zone: "D" },
+      { code: "AC-D006", zone: "D" },
+      { code: "AC-D007", zone: "D" },
+      { code: "AC-D008", zone: "D" },
+      { code: "AC-E010", zone: "E" },
+    ],
+  },
+  {
+    key: "coolingtower", label: "Cooling Tower", labelTh: "หอผึ่งน้ำ",
+    iconKey: "Fan", color: "#2E8B57", checklistKey: "coolingtower",
+    items: [
+      { code: "CT-A001", zone: "A" }, { code: "CT-A002", zone: "A" },
+      { code: "CT-B003", zone: "B" }, { code: "CT-B004", zone: "B" },
+      { code: "CT-B005", zone: "B" }, { code: "CT-B006", zone: "B" },
+      { code: "CT-D007", zone: "D", note: "รหัสจากป้ายไม่ชัด โปรดยืนยัน" },
+      { code: "CT-D008", zone: "D", note: "รหัสจากป้ายไม่ชัด โปรดยืนยัน" },
+      { code: "CT-D009", zone: "D" }, { code: "CT-D010", zone: "D" },
+      { code: "CT-E011", zone: "E" },
+    ],
+  },
+  {
+    key: "chiller", label: "Chiller", labelTh: "เครื่องทำน้ำเย็น",
+    iconKey: "Snowflake", color: "#2C6FB0", checklistKey: "chiller",
+    items: [
+      { code: "CL-A001", zone: "A" }, { code: "CL-A002", zone: "A" },
+      { code: "CL-B003", zone: "B" }, { code: "CL-B004", zone: "B" },
+      { code: "CL-D005", zone: "D" }, { code: "CL-D006", zone: "D" },
+      { code: "CL-E007", zone: "E" },
+    ],
+  },
+  {
+    key: "transformer", label: "Transformer", labelTh: "หม้อแปลงไฟฟ้า",
+    iconKey: "Zap", color: "#6A4FA0", checklistKey: null,
+    items: [
+      { code: "Tx-01", zone: "A", note: "1,000 kVA" },
+      { code: "Tx-02", zone: "B", note: "1,000 kVA" },
+      { code: "Tx-03", zone: "B", note: "1,000 kVA" },
+      { code: "Tx-05", zone: "D", note: "1,250 kVA" },
+      { code: "Tx-06", zone: "D", note: "1,250 kVA" },
+      { code: "Tx-07", zone: "C", note: "2,000 kVA" },
+      { code: "Tx-08", zone: "C", note: "650 kVA" },
+      { code: "Tx-09", zone: "E", note: "1,250 kVA" },
+    ],
+  },
+  {
+    key: "mdb", label: "MDB", labelTh: "ตู้จ่ายไฟหลัก",
+    iconKey: "Gauge", color: "#B0392C", checklistKey: "mdb",
+    items: [
+      { code: "MDB1", zone: "A" }, { code: "MDB2", zone: "B" },
+      { code: "MDB3", zone: "B" }, { code: "MDB5", zone: "D" },
+      { code: "MDB6", zone: "D" }, { code: "MDB7", zone: "C" },
+      { code: "MDB8", zone: "C" }, { code: "MDB9", zone: "E" },
+    ],
+  },
+  {
+    key: "lift", label: "Lift", labelTh: "ลิฟท์ขนส่ง/โดยสาร",
+    iconKey: "ArrowUpDown", color: "#1E88A8", checklistKey: "lift",
+    items: [
+      { code: "LIFT-A01", zone: "A", note: "500 กก." },
+      { code: "LIFT-B01", zone: "B", note: "800 กก." },
+      { code: "LIFT-C01", zone: "C", note: "1,000 กก." },
+      { code: "LIFT-C02", zone: "C", note: "500 กก." },
+      { code: "LIFT-C03", zone: "C", note: "500 กก." },
+      { code: "LIFT-C04", zone: "C", note: "500 กก. (สีเหลือง)" },
+      { code: "LIFT-C05", zone: "C", note: "500 กก. (สีเหลือง)" },
+      { code: "LIFT-D01", zone: "D", note: "1,000 กก." },
+      { code: "LIFT-D02", zone: "D", note: "1,000 กก." },
+      { code: "LIFT-E01", zone: "E", note: "500 กก." },
+      { code: "LIFT-E02", zone: "E", note: "500 กก." },
+      { code: "LIFT-E03", zone: "E", note: "750 กก. (โดยสาร)" },
+    ],
+  },
+  {
+    key: "hoist", label: "Hoist / Rigging", labelTh: "รอกยก / สลิงยก (PM ลิฟท์-เครื่อง)",
+    iconKey: "ArrowUpDown", color: "#8B5E34", checklistKey: null,
+    items: [
+      { code: "LT-A001", zone: "A", note: "500 กก." },
+      { code: "LT-B002", zone: "B", note: "500 กก." },
+      { code: "LT-C003", zone: "C", note: "1,000 กก." },
+      { code: "LT-C004", zone: "C", note: "500 กก." },
+      { code: "LT-C005", zone: "C", note: "500 กก." },
+      { code: "LT-C006", zone: "C", note: "โปรดยืนยันน้ำหนักบนป้าย" },
+      { code: "LT-C007", zone: "C", note: "500 กก." },
+      { code: "LT-D008", zone: "D", note: "500 กก." },
+      { code: "LT-D009", zone: "D", note: "500 กก." },
+      { code: "LT-E010", zone: "E", note: "500 กก." },
+      { code: "LT-E011", zone: "E", note: "500 กก." },
+      { code: "LT-E012", zone: "E", note: "โปรดยืนยันน้ำหนักบนป้าย" },
+    ],
+  },
+  {
+    key: "airdryer", label: "Air Dryer", labelTh: "เครื่องทำลมแห้ง",
+    iconKey: "Activity", color: "#3F8FBF", checklistKey: null,
+    items: [
+      { code: "AD-A001", zone: "A" },
+      { code: "AD-A002", zone: "A" },
+      { code: "AD-B003", zone: "B" },
+      { code: "AD-B004", zone: "B" },
+      { code: "AD-D005", zone: "D" },
+      { code: "AD-D006", zone: "D" },
+      { code: "AD-D007", zone: "D" },
+      { code: "AD-D008", zone: "D" },
+      { code: "AD-D009", zone: "E", note: "รหัสบนป้ายเป็น D009 แต่ Fac. ระบุโซน E — ตรวจสอบว่าเป็นเครื่องข้ามโซนแบบเดียวกับกรณี PI211 หรือไม่" },
+    ],
+  },
+  {
+    // PLACEHOLDER — no real BESS unit codes/capacities were provided yet.
+    // One placeholder unit per zone (A-E) so the tab is usable immediately;
+    // replace code/capacity/power with the actual nameplate data from your
+    // BESS installation before relying on the cycle-count/efficiency math.
+    key: "bess", label: "BESS (Battery Storage)", labelTh: "ระบบกักเก็บพลังงานด้วยแบตเตอรี่",
+    iconKey: "BatteryCharging", color: "#1F8A55", checklistKey: "bess",
+    items: [
+      { code: "BESS-A01", zone: "A", note: "ตัวอย่าง — ระบุ kWh/kW จริง", capacityKwh: 100, powerKw: 50 },
+      { code: "BESS-B01", zone: "B", note: "ตัวอย่าง — ระบุ kWh/kW จริง", capacityKwh: 100, powerKw: 50 },
+      { code: "BESS-D01", zone: "D", note: "ตัวอย่าง — ระบุ kWh/kW จริง", capacityKwh: 100, powerKw: 50 },
+    ],
+  },
+  {
+    key: "crane", label: "Crane", labelTh: "เครน",
+    iconKey: "Construction", color: "#B08B1E", checklistKey: "crane",
+    items: [
+      { code: "CA-A01", zone: "A", note: "5 TON" },
+      { code: "CA-A02", zone: "A", note: "5 TON" },
+      { code: "CA-B03", zone: "B", note: "5 TON" },
+      { code: "CA-B04", zone: "B", note: "5 TON" },
+      { code: "CA-D05", zone: "D", note: "5 TON" },
+      { code: "CA-D06", zone: "D", note: "5 TON" },
+      { code: "CA-D07", zone: "D", note: "10 TON" },
+      { code: "CA-D08", zone: "D", note: "10 TON" },
+      { code: "CA-C09", zone: "C", note: "40/20 TON — โปรดยืนยันตัวเลข" },
+      { code: "CA-C10", zone: "C", note: "20/10 TON — โปรดยืนยันตัวเลข" },
+      { code: "CA-B11", zone: "B", note: "20/10 TON — โปรดยืนยันตัวเลข" },
+      { code: "CA-E12", zone: "E", note: "10 TON" },
+      { code: "CA-C13", zone: "C", note: "สลิงยก MOLD — โปรดยืนยันพิกัดน้ำหนัก" },
+    ],
+  },
+];
+
+const ZONES = [
+  { key: "A", label: "Plant.A", color: "#2C6FB0" },
+  { key: "B", label: "Plant.B", color: "#2E8B57" },
+  { key: "C", label: "Plant.C", color: "#C0722A" },
+  { key: "D", label: "Plant.D", color: "#6A4FA0" },
+  { key: "E", label: "Plant.E", color: "#B0392C" },
+];
+
+// Sub-metered system types tracked per zone — the plant-wide total & SEC are
+// derived from these, never entered twice (single source of truth).
+const SYSTEM_TYPES = [
+  { key: "coolingTower", label: "Cooling Tower", color: "#2C6FB0" },
+  { key: "chiller", label: "Chiller", color: "#1F8A55" },
+  { key: "compressor", label: "Air Compressor", color: "#F5A623" },
+  { key: "airDryer", label: "Air Dryer", color: "#8B8FA3" },
+  { key: "pumpOthers", label: "Pump & Others", color: "#6A4FA0" },
+];
+
+// ---------------------------------------------------------------------------
+// Colors
+// ---------------------------------------------------------------------------
+const NAVY = "#0F2942";
+const AMBER = "#F5A623";
+const GREEN = "#1F8A55";
+const RED = "#C23B3B";
+const MUTED = "#64748B";
+const BORDER = "#DCE2E8";
+const BG = "#F5F7FA";
+
+// ---------------------------------------------------------------------------
+// Date helpers
+// ---------------------------------------------------------------------------
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function fmtShort(dateStr) {
+  const [, m, d] = dateStr.split("-");
+  return `${d}/${m}`;
+}
+function monthKey(dateStr) {
+  return dateStr.slice(0, 7); // YYYY-MM
+}
+const MONTH_NAMES_TH = [
+  "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+  "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
+];
+function daysInMonth(year, month) {
+  return new Date(year, month, 0).getDate(); // month is 1-indexed here
+}
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+function ymd(year, month, day) {
+  return `${year}-${pad2(month)}-${pad2(day)}`;
+}
+function isFutureDate(dateStr) {
+  return dateStr > todayStr();
+}
+function num(v) {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Zone energy helpers — total kWh & per-system totals are always DERIVED
+// from the per-zone sub-meter entries, never entered as a separate number,
+// so there is exactly one place the truth lives.
+// ---------------------------------------------------------------------------
+function zoneTotalKwh(zoneData) {
+  if (!zoneData?.systems) return 0;
+  return SYSTEM_TYPES.reduce((sum, s) => sum + num(zoneData.systems[s.key]), 0);
+}
+function plantTotalKwh(zoneEnergyRecord) {
+  if (!zoneEnergyRecord) return 0;
+  return ZONES.reduce((sum, z) => sum + zoneTotalKwh(zoneEnergyRecord[z.key]), 0);
+}
+function systemTypeTotal(zoneEnergyRecord, systemKey) {
+  if (!zoneEnergyRecord) return 0;
+  return ZONES.reduce((sum, z) => sum + num(zoneEnergyRecord[z.key]?.systems?.[systemKey]), 0);
+}
+function zoneHasData(zoneData) {
+  return !!zoneData && (zoneTotalKwh(zoneData) > 0 || num(zoneData.pf) > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Health scoring ("doctor app" style diagnosis)
+// ---------------------------------------------------------------------------
+function computeUnitStatus(category, unitCode, entry) {
+  if (!category.checklistKey) {
+    const s = entry.simpleStatus?.[unitCode];
+    return s === "ok" || s === "fail" ? s : "unchecked";
+  }
+  const template = CHECKLIST_TEMPLATES[category.checklistKey];
+  const itemResults = entry.results?.[unitCode] || {};
+  const answered = template.filter((t) => itemResults[t.id] === "ok" || itemResults[t.id] === "fail");
+  if (answered.length === 0) {
+    // No itemized answers yet for this day — fall back to a quick tick (e.g. entered
+    // straight from the monthly grid) so a fast daily mark still counts toward health.
+    const quick = entry.simpleStatus?.[unitCode];
+    return quick === "ok" || quick === "fail" ? quick : "unchecked";
+  }
+  if (answered.some((t) => itemResults[t.id] === "fail")) return "fail";
+  if (answered.length < template.length) return "partial";
+  return "ok";
+}
+
+function scoreItems(category, items, entry) {
+  let ok = 0, checked = 0;
+  const total = items.filter((i) => !i.spare).length;
+  items.forEach((it) => {
+    if (it.spare) return;
+    const s = computeUnitStatus(category, it.code, entry);
+    if (s === "ok" || s === "fail") {
+      checked += 1;
+      if (s === "ok") ok += 1;
+    }
+  });
+  return { ok, checked, total };
+}
+
+function scoreCategory(category, entry) {
+  return scoreItems(category, category.items, entry);
+}
+
+function overallScore(entry) {
+  if (!entry) return null;
+  let ok = 0, checked = 0;
+  CATEGORIES.forEach((cat) => {
+    const s = scoreCategory(cat, entry);
+    ok += s.ok;
+    checked += s.checked;
+  });
+  if (checked === 0) return null;
+  return Math.round((ok / checked) * 100);
+}
+
+function zoneScore(zoneKey, entry) {
+  let ok = 0, checked = 0, total = 0;
+  CATEGORIES.forEach((cat) => {
+    const zoneItems = cat.items.filter((i) => i.zone === zoneKey);
+    const s = scoreItems(cat, zoneItems, entry);
+    ok += s.ok; checked += s.checked; total += s.total;
+  });
+  return { ok, checked, total, pct: checked === 0 ? null : Math.round((ok / checked) * 100) };
+}
+
+function healthLabel(score) {
+  if (score === null || score === undefined) return { text: "ยังไม่มีข้อมูล", color: MUTED };
+  if (score >= 95) return { text: "ดีเยี่ยม", color: GREEN };
+  if (score >= 85) return { text: "ปกติ", color: "#2C6FB0" };
+  if (score >= 70) return { text: "ต้องเฝ้าระวัง", color: AMBER };
+  return { text: "วิกฤต ต้องแก้ไขด่วน", color: RED };
+}
+
+function pfLabel(pf) {
+  if (pf === null || pf === undefined || pf === "") return { text: "ยังไม่มีข้อมูล", color: MUTED };
+  const v = parseFloat(pf);
+  if (Number.isNaN(v)) return { text: "-", color: MUTED };
+  if (v >= 0.9) return { text: "ปกติ (≥ 0.90)", color: GREEN };
+  if (v >= 0.85) return { text: "เฝ้าระวัง (0.85–0.90)", color: AMBER };
+  return { text: "ต่ำกว่ามาตรฐาน (< 0.85)", color: RED };
+}
+
+const STATUS_META = {
+  unchecked: { text: "ยังไม่ตรวจ", color: MUTED, bg: "#F1F3F5" },
+  partial: { text: "กำลังตรวจ", color: AMBER, bg: `${AMBER}1A` },
+  ok: { text: "ปกติ", color: GREEN, bg: `${GREEN}1A` },
+  fail: { text: "ผิดปกติ", color: RED, bg: `${RED}1A` },
+};
+
+// ---------------------------------------------------------------------------
+// Storage helpers (shared across the team)
+// ---------------------------------------------------------------------------
+async function safeGet(key) {
+  try {
+    const res = await window.storage.get(key, true);
+    return res ? JSON.parse(res.value) : null;
+  } catch {
+    return null;
+  }
+}
+async function safeSet(key, data) {
+  await window.storage.set(key, JSON.stringify(data), true);
+}
+async function listRecentDates(prefix, limit = 30) {
+  try {
+    const res = await window.storage.list(prefix, true);
+    const dates = (res?.keys || [])
+      .map((k) => k.slice(prefix.length))
+      .sort()
+      .reverse()
+      .slice(0, limit)
+      .reverse();
+    return dates;
+  } catch {
+    return [];
+  }
+}
+
+const emptyEntry = () => ({ results: {}, simpleStatus: {}, notes: {} });
+const emptyZoneSystems = () => Object.fromEntries(SYSTEM_TYPES.map((s) => [s.key, ""]));
+const emptyZoneEnergy = () => ({ systems: emptyZoneSystems(), pf: "" });
+const emptyPlantEnergy = () => ({ peak: "", mainPf: "", production: "" });
+
+const DEFAULT_ENERGY_CONFIG = {
+  tariffThbPerKwh: "3.50", // matches the project's stated default; editable in ตั้งค่า
+  pfTarget: "0.85", // standard PF penalty threshold used by Thai utilities (MEA/PEA); editable
+  pfPenaltyRatePerKvar: "", // N/A until the user enters their own rate from their utility invoice
+  carbonFactorKgPerKwh: "", // N/A until the user enters their grid's published emission factor
+  targetReductionPct: "5",
+  baselineDays: "30",
+};
+
+// ---------------------------------------------------------------------------
+// Advanced energy-engineering formulas — every constant here is either a
+// textbook definition (Load Factor, reactive-power triangle) or a value the
+// user configures themselves (tariff, PF penalty rate, emission factor).
+// Nothing is a guessed/fabricated engineering number.
+// ---------------------------------------------------------------------------
+
+// Load Factor (%) = Average Load ÷ Peak Demand, for a 24h day:
+// Average Load (kW) = kWh ÷ 24h. Standard electrical-engineering definition.
+function loadFactorPct(kwh, peakKw) {
+  const k = num(kwh), p = num(peakKw);
+  if (p <= 0) return null;
+  const avgLoad = k / 24;
+  return Math.min(100, (avgLoad / p) * 100);
+}
+
+// Reactive power (kVAR) that would need to be corrected to reach the target
+// PF, from the standard power triangle: kVAR = kW × (tanφ_actual − tanφ_target).
+// This is pure trigonometry — no fabricated constant.
+function excessKvar(peakKw, pfActual, pfTarget) {
+  const p = num(peakKw);
+  const pfA = parseFloat(pfActual);
+  const pfT = parseFloat(pfTarget);
+  if (!p || !pfA || !pfT || pfA <= 0 || pfA >= 1 || pfT <= 0 || pfT >= 1) return null;
+  const phiA = Math.acos(pfA);
+  const phiT = Math.acos(pfT);
+  const kvar = p * (Math.tan(phiA) - Math.tan(phiT));
+  return kvar > 0 ? kvar : 0;
+}
+
+function pfPenaltyEstimate(peakKw, pfActual, config) {
+  const kvar = excessKvar(peakKw, pfActual, config.pfTarget);
+  if (kvar === null) return null;
+  const rate = parseFloat(config.pfPenaltyRatePerKvar);
+  if (!rate) return { kvar, cost: null };
+  return { kvar, cost: kvar * rate };
+}
+
+function co2eKg(kwh, config) {
+  const factor = parseFloat(config.carbonFactorKgPerKwh);
+  if (!factor) return null;
+  return num(kwh) * factor;
+}
+// ---------------------------------------------------------------------------
+// Small UI atoms
+// ---------------------------------------------------------------------------
+function Pill({ color, bg, children }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium whitespace-nowrap"
+      style={{ backgroundColor: bg || `${color}1A`, color }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Card({ children, className = "", padded = true, style }) {
+  return (
+    <div
+      className={`bg-white rounded-xl border shadow-sm ${padded ? "p-5" : ""} ${className}`}
+      style={{ borderColor: BORDER, ...style }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function EmptyState({ icon: Icon, text }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-12 gap-2">
+      <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ backgroundColor: "#EEF1F4" }}>
+        <Icon size={20} color={MUTED} />
+      </div>
+      <p className="text-sm" style={{ color: MUTED }}>{text}</p>
+    </div>
+  );
+}
+
+function ScoreRing({ score, size = 132, labelText = "สุขภาพระบบ" }) {
+  const lbl = healthLabel(score);
+  const r = (size - 14) / 2;
+  const c = 2 * Math.PI * r;
+  const offset = score === null ? c : c - (score / 100) * c;
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} stroke="#2A4A66" strokeWidth="10" fill="none" />
+        <circle
+          cx={size / 2} cy={size / 2} r={r} stroke={lbl.color} strokeWidth="10" fill="none"
+          strokeDasharray={c} strokeDashoffset={offset} strokeLinecap="round"
+          style={{ transition: "stroke-dashoffset 0.6s ease" }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-2xl font-semibold text-white leading-none">
+          {score === null ? "–" : `${score}%`}
+        </span>
+        <span className="text-[10px] mt-1 text-center px-2" style={{ color: "#9FB4C7" }}>{labelText}</span>
+      </div>
+    </div>
+  );
+}
+
+function Toast({ message, onDone }) {
+  useEffect(() => {
+    const t = setTimeout(onDone, 2400);
+    return () => clearTimeout(t);
+  }, [onDone]);
+  return (
+    <div className="fixed bottom-6 right-6 bg-[#16232E] text-white text-sm px-4 py-2.5 rounded shadow-lg z-50 flex items-center gap-2 max-w-sm">
+      <CheckCircle2 size={16} color={GREEN} className="flex-shrink-0" />
+      {message}
+    </div>
+  );
+}
+
+const ICONS = { Wind, Fan, Snowflake, Zap, Gauge, ArrowUpDown, Construction, Activity, BatteryCharging };
+
+// ---------------------------------------------------------------------------
+// Dashboard tab
+// ---------------------------------------------------------------------------
+function DashboardTab({ latestEntry, latestEnergy, latestZoneEnergy, dashboardScore, dashboardLabel, trendData, onGoInspect }) {
+  const entry = latestEntry?.entry;
+  const en = latestEnergy?.energy;
+  const pf = pfLabel(en?.mainPf);
+  const zoneTotal = latestZoneEnergy?.data ? plantTotalKwh(latestZoneEnergy.data) : null;
+
+  const failing = [];
+  if (entry) {
+    CATEGORIES.forEach((cat) => {
+      cat.items.forEach((it) => {
+        if (it.spare) return;
+        const s = computeUnitStatus(cat, it.code, entry);
+        if (s === "fail") failing.push({ code: it.code, cat: cat.label });
+      });
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-xl border shadow-sm p-5 flex items-center justify-between flex-wrap gap-4" style={{ borderColor: BORDER }}>
+        <div>
+          <p className="text-sm" style={{ color: MUTED }}>
+            {latestEntry ? `ข้อมูลล่าสุดวันที่ ${latestEntry.date}` : "ยังไม่มีการบันทึกผลตรวจ"}
+          </p>
+          <p className="text-2xl font-semibold mt-1" style={{ color: dashboardLabel.color }}>
+            {dashboardLabel.text}
+          </p>
+        </div>
+        {failing.length > 0 && (
+          <button
+            onClick={onGoInspect}
+            className="flex items-center gap-2 text-sm px-3 py-2 rounded border"
+            style={{ backgroundColor: `${RED}0D`, color: RED, borderColor: `${RED}55` }}
+          >
+            <AlertTriangle size={16} />
+            พบผิดปกติ {failing.length} รายการ — {failing.slice(0, 3).map((f) => f.code).join(", ")}
+            {failing.length > 3 ? " ..." : ""}
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {CATEGORIES.map((cat) => {
+          const s = scoreCategory(cat, entry || emptyEntry());
+          const pct = s.checked === 0 ? null : Math.round((s.ok / s.checked) * 100);
+          const lbl = healthLabel(pct);
+          const Icon = ICONS[cat.iconKey];
+          return (
+            <div key={cat.key} className="bg-white rounded-xl border shadow-sm p-4" style={{ borderColor: BORDER }}>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${cat.color}1A` }}>
+                    <Icon size={17} color={cat.color} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold" style={{ color: "#16232E" }}>{cat.label}</p>
+                    <p className="text-xs" style={{ color: MUTED }}>{cat.labelTh}</p>
+                  </div>
+                </div>
+                <span className="text-xl font-semibold" style={{ color: lbl.color }}>
+                  {pct === null ? "–" : `${pct}%`}
+                </span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                <div className="h-full rounded-full" style={{ width: `${pct || 0}%`, backgroundColor: lbl.color }} />
+              </div>
+              <p className="text-xs mt-2" style={{ color: MUTED }}>
+                {s.checked === 0 ? "ยังไม่มีข้อมูลวันนี้" : `ปกติ ${s.ok} / ตรวจแล้ว ${s.checked} (ทั้งหมด ${s.total} เครื่อง)`}
+              </p>
+            </div>
+          );
+        })}
+
+        <div className="bg-white rounded-xl border shadow-sm p-4" style={{ borderColor: BORDER }}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${AMBER}1A` }}>
+                <Zap size={17} color={AMBER} />
+              </div>
+              <div>
+                <p className="text-sm font-semibold" style={{ color: "#16232E" }}>Power Factor เฉลี่ย</p>
+                <p className="text-xs" style={{ color: MUTED }}>ค่าตัวประกอบกำลังไฟฟ้ารวมโรงงาน</p>
+              </div>
+            </div>
+            <span className="text-xl font-semibold" style={{ color: pf.color }}>{en?.mainPf || "–"}</span>
+          </div>
+          <p className="text-xs" style={{ color: pf.color }}>{pf.text}</p>
+          {(en || zoneTotal !== null) && (
+            <p className="text-xs mt-2" style={{ color: MUTED }}>
+              Total Energy {zoneTotal !== null ? zoneTotal.toLocaleString() : "-"} kWh · Peak {en?.peak || "-"} kW
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border shadow-sm p-5" style={{ borderColor: BORDER }}>
+        <div className="flex items-center gap-2 mb-4">
+          <TrendingUp size={16} color={NAVY} />
+          <p className="text-sm font-semibold" style={{ color: "#16232E" }}>แนวโน้มสุขภาพระบบ (ข้อมูลล่าสุดที่มี)</p>
+        </div>
+        {trendData.length === 0 ? (
+          <p className="text-sm py-10 text-center" style={{ color: MUTED }}>ยังไม่มีข้อมูลเพียงพอสำหรับกราฟแนวโน้ม</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={trendData} margin={{ top: 5, right: 10, bottom: 0, left: -20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F4" />
+              <XAxis dataKey="date" tick={{ fontSize: 11, fill: MUTED }} />
+              <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: MUTED }} />
+              <Tooltip />
+              <Line type="monotone" dataKey="health" name="สุขภาพระบบ (%)" stroke={NAVY} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Checklist row for a single unit (expandable)
+// ---------------------------------------------------------------------------
+function UnitChecklistRow({ category, unit, entry, setResult, setSimpleStatus, setNote, setValue }) {
+  const [open, setOpen] = useState(false);
+  const status = computeUnitStatus(category, unit.code, entry);
+  const meta = STATUS_META[status];
+  const template = category.checklistKey ? CHECKLIST_TEMPLATES[category.checklistKey] : null;
+
+  if (unit.spare) {
+    return (
+      <div className="flex items-center justify-between px-4 py-2.5 border-b last:border-b-0" style={{ borderColor: "#F0F2F5" }}>
+        <div>
+          <p className="text-sm font-medium" style={{ color: "#16232E" }}>{unit.code}</p>
+          <p className="text-xs" style={{ color: MUTED }}>โซน {unit.zone}{unit.note ? ` · ${unit.note}` : ""}</p>
+        </div>
+        <span className="text-xs italic" style={{ color: MUTED }}>เครื่องสำรอง — ไม่รวมในคะแนนสุขภาพ</span>
+      </div>
+    );
+  }
+
+  if (!template) {
+    // Simple mode (e.g. Transformer, Air Dryer, Hoist/Rigging): single ok/fail
+    // toggle, no sub-checklist.
+    const simple = entry.simpleStatus?.[unit.code];
+    return (
+      <div className="flex items-center gap-3 px-4 py-2.5 border-b last:border-b-0 flex-wrap" style={{ borderColor: "#F0F2F5" }}>
+        <div className="w-36 flex-shrink-0">
+          <p className="text-sm font-medium" style={{ color: "#16232E" }}>{unit.code}</p>
+          <p className="text-xs" style={{ color: MUTED }}>โซน {unit.zone}{unit.note ? ` · ${unit.note}` : ""}</p>
+        </div>
+        <button
+          onClick={() => setSimpleStatus(unit.code, "ok")}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium border"
+          style={simple === "ok" ? { backgroundColor: `${GREEN}1A`, color: GREEN, borderColor: GREEN } : { backgroundColor: "#FFF", color: MUTED, borderColor: BORDER }}
+        >
+          <CheckCircle2 size={14} /> ปกติ
+        </button>
+        <button
+          onClick={() => setSimpleStatus(unit.code, "fail")}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium border"
+          style={simple === "fail" ? { backgroundColor: `${RED}1A`, color: RED, borderColor: RED } : { backgroundColor: "#FFF", color: MUTED, borderColor: BORDER }}
+        >
+          <XCircle size={14} /> ผิดปกติ
+        </button>
+        <input
+          type="text"
+          placeholder="หมายเหตุ / ค่าที่วัดได้ (ถ้ามี)"
+          value={entry.notes?.[unit.code] || ""}
+          onChange={(e) => setNote(unit.code, e.target.value)}
+          className="flex-1 min-w-[160px] border rounded px-2 py-1.5 text-xs"
+          style={{ borderColor: BORDER }}
+        />
+      </div>
+    );
+  }
+
+  const itemResults = entry.results?.[unit.code] || {};
+  const itemValues = entry.notes?.[unit.code] || {};
+  const answeredCount = template.filter((t) => itemResults[t.id] === "ok" || itemResults[t.id] === "fail").length;
+
+  return (
+    <div className="border-b last:border-b-0" style={{ borderColor: "#F0F2F5" }}>
+      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-3 px-4 py-2.5 flex-wrap text-left">
+        {open ? <ChevronDown size={15} color={MUTED} /> : <ChevronRight size={15} color={MUTED} />}
+        <div className="w-36 flex-shrink-0">
+          <p className="text-sm font-medium" style={{ color: "#16232E" }}>{unit.code}</p>
+          <p className="text-xs" style={{ color: MUTED }}>โซน {unit.zone}{unit.note ? ` · ${unit.note}` : ""}</p>
+        </div>
+        <Pill color={meta.color} bg={meta.bg}>
+          {meta.text} ({answeredCount}/{template.length})
+        </Pill>
+      </button>
+
+      {open && (
+        <div className="pb-3 pl-9 pr-4">
+          {template.map((t) => {
+            const res = itemResults[t.id];
+            return (
+              <div key={t.id} className="flex items-center gap-3 py-1.5 flex-wrap border-t" style={{ borderColor: "#F5F6F8" }}>
+                <div className="flex-1 min-w-[220px]">
+                  <p className="text-xs font-medium" style={{ color: "#16232E" }}>{t.item}</p>
+                  <p className="text-[11px]" style={{ color: MUTED }}>{t.method} · เกณฑ์: {t.standard}</p>
+                </div>
+                <button
+                  onClick={() => setResult(unit.code, t.id, res === "ok" ? undefined : "ok")}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium border"
+                  style={res === "ok" ? { backgroundColor: `${GREEN}1A`, color: GREEN, borderColor: GREEN } : { backgroundColor: "#FFF", color: MUTED, borderColor: BORDER }}
+                >
+                  <CheckCircle2 size={12} /> ปกติ
+                </button>
+                <button
+                  onClick={() => setResult(unit.code, t.id, res === "fail" ? undefined : "fail")}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium border"
+                  style={res === "fail" ? { backgroundColor: `${RED}1A`, color: RED, borderColor: RED } : { backgroundColor: "#FFF", color: MUTED, borderColor: BORDER }}
+                >
+                  <XCircle size={12} /> ผิดปกติ
+                </button>
+                {t.numeric && (
+                  <input
+                    type="text"
+                    placeholder="ค่าที่วัดได้"
+                    value={itemValues[t.id] || ""}
+                    onChange={(e) => setValue(unit.code, t.id, e.target.value)}
+                    className="w-28 border rounded px-2 py-1 text-[11px]"
+                    style={{ borderColor: BORDER }}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Inspection entry tab
+// ---------------------------------------------------------------------------
+function InspectTab({ selectedDate, setSelectedDate, entry, setResult, setSimpleStatus, setNote, setValue, openCats, setOpenCats, onSave, saving, loading, jumpTarget }) {
+  return (
+    <div className="space-y-5">
+      <div className="bg-white rounded-xl border shadow-sm p-4 flex items-center gap-3 flex-wrap" style={{ borderColor: BORDER }}>
+        <Calendar size={16} color={MUTED} />
+        <label className="text-sm" style={{ color: MUTED }}>วันที่ตรวจ:</label>
+        <input
+          type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}
+          className="border rounded px-2 py-1.5 text-sm" style={{ borderColor: BORDER }}
+        />
+        <span className="text-xs" style={{ color: MUTED }}>
+          ข้อมูลนี้เป็นข้อมูลกลาง — ทุกคนที่เปิดแอปนี้จะเห็นและแก้ไขร่วมกันได้
+        </span>
+      </div>
+
+      {loading ? (
+        <p className="text-sm py-10 text-center" style={{ color: MUTED }}>กำลังโหลดข้อมูล...</p>
+      ) : (
+        CATEGORIES.map((cat) => {
+          const Icon = ICONS[cat.iconKey];
+          const open = openCats[cat.key];
+          const s = scoreCategory(cat, entry);
+          return (
+            <div key={cat.key} id={`cat-${cat.key}`} className="bg-white rounded-xl border shadow-sm overflow-hidden" style={{ borderColor: BORDER }}>
+              <button onClick={() => setOpenCats((p) => ({ ...p, [cat.key]: !p[cat.key] }))} className="w-full flex items-center justify-between px-4 py-3">
+                <div className="flex items-center gap-2.5">
+                  {open ? <ChevronDown size={16} color={MUTED} /> : <ChevronRight size={16} color={MUTED} />}
+                  <Icon size={17} color={cat.color} />
+                  <span className="text-sm font-semibold" style={{ color: "#16232E" }}>{cat.label}</span>
+                  <span className="text-xs" style={{ color: MUTED }}>({cat.labelTh})</span>
+                </div>
+                <Pill color={s.checked === s.total && s.total > 0 ? GREEN : MUTED}>
+                  ตรวจแล้ว {s.checked}/{s.total}
+                </Pill>
+              </button>
+
+              {open && (
+                <div className="border-t" style={{ borderColor: BORDER }}>
+                  {cat.items.map((unit) => (
+                    <UnitChecklistRow
+                      key={unit.code}
+                      category={cat}
+                      unit={unit}
+                      entry={entry}
+                      setResult={setResult}
+                      setSimpleStatus={setSimpleStatus}
+                      setNote={setNote}
+                      setValue={setValue}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
+
+      <div className="flex justify-end sticky bottom-4">
+        <button
+          onClick={onSave}
+          disabled={saving || loading}
+          className="flex items-center gap-2 px-5 py-2.5 rounded text-sm font-medium text-white disabled:opacity-60 shadow-lg"
+          style={{ backgroundColor: NAVY }}
+        >
+          <Save size={15} />
+          {saving ? "กำลังบันทึก..." : "บันทึกผลตรวจ"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Monthly grid — full-month calendar table per category, click a cell to
+// cycle its status (like the paper "แผน/จริง" matrix, but live and shared).
+// ---------------------------------------------------------------------------
+const STATUS_CYCLE = ["unchecked", "ok", "fail"];
+const GRID_DOT = {
+  unchecked: { bg: "#E7EAEE", ring: "#D5DAE0" },
+  partial: { bg: AMBER, ring: AMBER },
+  ok: { bg: GREEN, ring: GREEN },
+  fail: { bg: RED, ring: RED },
+};
+
+function MonthlyGridTab({ year, month, setYearMonth, category, setCategoryKey, monthEntries, loading, onToggleCell, savingCell }) {
+  const nDays = daysInMonth(year, month);
+  const days = Array.from({ length: nDays }, (_, i) => i + 1);
+  const units = category.items;
+
+  const goMonth = (delta) => {
+    let m = month + delta, y = year;
+    if (m > 12) { m = 1; y += 1; }
+    if (m < 1) { m = 12; y -= 1; }
+    setYearMonth(y, m);
+  };
+
+  const monthlyStat = (unit) => {
+    let ok = 0, fail = 0, checked = 0;
+    days.forEach((d) => {
+      const dateStr = ymd(year, month, d);
+      const e = monthEntries[dateStr];
+      if (!e) return;
+      const s = computeUnitStatus(category, unit.code, e);
+      if (s === "ok") { ok += 1; checked += 1; }
+      if (s === "fail") { fail += 1; checked += 1; }
+    });
+    return { ok, fail, checked };
+  };
+
+  return (
+    <div className="space-y-5">
+      <Card className="flex items-center gap-3 flex-wrap justify-between">
+        <div className="flex items-center gap-2">
+          <button onClick={() => goMonth(-1)} className="p-1.5 rounded hover:bg-gray-100" style={{ color: MUTED }}>
+            <ChevronLeft size={18} />
+          </button>
+          <div className="flex items-center gap-2 text-sm font-semibold min-w-[150px] justify-center" style={{ color: "#16232E" }}>
+            <CalendarDays size={16} color={MUTED} />
+            {MONTH_NAMES_TH[month - 1]} {year + 543}
+          </div>
+          <button onClick={() => goMonth(1)} className="p-1.5 rounded hover:bg-gray-100" style={{ color: MUTED }}>
+            <ChevronRight size={18} />
+          </button>
+        </div>
+        <div className="flex items-center gap-1.5 overflow-x-auto max-w-full">
+          {CATEGORIES.map((c) => {
+            const Icon = ICONS[c.iconKey];
+            const active = c.key === category.key;
+            return (
+              <button
+                key={c.key}
+                onClick={() => setCategoryKey(c.key)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap border transition-colors"
+                style={active
+                  ? { backgroundColor: `${c.color}1A`, color: c.color, borderColor: c.color }
+                  : { backgroundColor: "#FFF", color: MUTED, borderColor: BORDER }}
+              >
+                <Icon size={13} /> {c.label}
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      <Card padded={false} className="overflow-x-auto">
+        {loading ? (
+          <EmptyState icon={CalendarDays} text="กำลังโหลดข้อมูลทั้งเดือน..." />
+        ) : (
+          <table className="text-sm border-collapse w-full">
+            <thead>
+              <tr>
+                <th className="sticky left-0 z-10 bg-white text-left px-3 py-2.5 text-xs font-semibold border-b border-r" style={{ color: "#16232E", borderColor: BORDER, minWidth: 150 }}>
+                  {category.label}
+                </th>
+                {days.map((d) => {
+                  const dateStr = ymd(year, month, d);
+                  const isToday = dateStr === todayStr();
+                  return (
+                    <th
+                      key={d}
+                      className="text-center px-1 py-2 text-[10px] font-medium border-b"
+                      style={{ color: isToday ? NAVY : MUTED, borderColor: BORDER, backgroundColor: isToday ? `${AMBER}22` : "transparent", minWidth: 26 }}
+                    >
+                      {d}
+                    </th>
+                  );
+                })}
+                <th className="text-center px-2 py-2 text-[10px] font-semibold border-b border-l" style={{ color: "#16232E", borderColor: BORDER, minWidth: 70 }}>
+                  สรุปเดือน
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {units.map((unit) => {
+                const stat = monthlyStat(unit);
+                return (
+                  <tr key={unit.code}>
+                    <td className="sticky left-0 z-10 bg-white px-3 py-2 border-b border-r" style={{ borderColor: BORDER }}>
+                      <p className="text-xs font-medium" style={{ color: "#16232E" }}>{unit.code}</p>
+                      <p className="text-[10px]" style={{ color: MUTED }}>โซน {unit.zone}{unit.spare ? " · สำรอง" : ""}</p>
+                    </td>
+                    {days.map((d) => {
+                      const dateStr = ymd(year, month, d);
+                      const e = monthEntries[dateStr];
+                      const status = unit.spare ? "unchecked" : (e ? computeUnitStatus(category, unit.code, e) : "unchecked");
+                      const dot = GRID_DOT[status] || GRID_DOT.unchecked;
+                      const future = isFutureDate(dateStr);
+                      const cellKey = `${dateStr}__${unit.code}`;
+                      const isSaving = savingCell === cellKey;
+                      return (
+                        <td key={d} className="text-center border-b" style={{ borderColor: "#F0F2F5" }}>
+                          <button
+                            disabled={unit.spare || future}
+                            onClick={() => onToggleCell(dateStr, category, unit.code)}
+                            className="w-6 h-6 rounded-md flex items-center justify-center mx-auto my-0.5 disabled:opacity-30 disabled:cursor-not-allowed transition-transform hover:scale-110"
+                            title={`${unit.code} · ${dateStr}`}
+                          >
+                            {isSaving ? (
+                              <span className="w-2.5 h-2.5 rounded-full animate-pulse" style={{ backgroundColor: MUTED }} />
+                            ) : status === "ok" ? (
+                              <CheckCircle2 size={16} color={GREEN} />
+                            ) : status === "fail" ? (
+                              <XCircle size={16} color={RED} />
+                            ) : status === "partial" ? (
+                              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: dot.bg }} />
+                            ) : (
+                              <Minus size={13} color="#C7CDD4" />
+                            )}
+                          </button>
+                        </td>
+                      );
+                    })}
+                    <td className="text-center px-2 py-2 border-b border-l" style={{ borderColor: BORDER }}>
+                      {unit.spare ? (
+                        <span className="text-[10px]" style={{ color: MUTED }}>สำรอง</span>
+                      ) : (
+                        <span className="text-[10px]" style={{ color: MUTED }}>
+                          <span style={{ color: GREEN, fontWeight: 600 }}>{stat.ok}</span>
+                          {" / "}
+                          <span style={{ color: RED, fontWeight: 600 }}>{stat.fail}</span>
+                          {" / "}{nDays}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </Card>
+
+      <Card>
+        <p className="text-xs font-semibold mb-2" style={{ color: "#16232E" }}>วิธีใช้ตาราง</p>
+        <div className="flex flex-wrap gap-4 text-xs" style={{ color: MUTED }}>
+          <span className="flex items-center gap-1.5"><Minus size={13} color="#C7CDD4" /> ยังไม่ตรวจ</span>
+          <span className="flex items-center gap-1.5"><CheckCircle2 size={14} color={GREEN} /> ปกติ</span>
+          <span className="flex items-center gap-1.5"><XCircle size={14} color={RED} /> ผิดปกติ</span>
+          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: AMBER }} /> ตรวจละเอียดบางส่วน (ไปเติมต่อได้ที่แท็บ &quot;บันทึกผลตรวจ&quot;)</span>
+        </div>
+        <p className="text-xs mt-2" style={{ color: MUTED }}>
+          คลิกที่จุดในตาราง เพื่อสลับสถานะ ยังไม่ตรวจ → ปกติ → ผิดปกติ → ยังไม่ตรวจ ได้ทันที (บันทึกอัตโนมัติทุกครั้งที่คลิก)
+          สรุปเดือนนับเฉพาะวันที่มีการตรวจแล้วเท่านั้น ช่อง &quot;ผิดปกติ&quot; ที่ต้องการรายละเอียดครบ ให้ไปกรอกที่แท็บ &quot;บันทึกผลตรวจ&quot; ของวันนั้น
+        </p>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Zone energy overview tab
+// ---------------------------------------------------------------------------
+function ZoneEnergyTab({ selectedDate, setSelectedDate, zoneEnergy, setZoneSystem, setZonePf, onSaveZone, saving, loading, hideDatePicker, hideSaveButton }) {
+  const plantTotal = plantTotalKwh(zoneEnergy);
+
+  return (
+    <div className="space-y-5">
+      {!hideDatePicker && (
+        <Card className="flex items-center gap-3 flex-wrap">
+          <Calendar size={16} color={MUTED} />
+          <label className="text-sm" style={{ color: MUTED }}>วันที่บันทึก:</label>
+          <input
+            type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}
+            className="border rounded px-2 py-1.5 text-sm" style={{ borderColor: BORDER }}
+          />
+        </Card>
+      )}
+
+      <Card padded={false} className="overflow-x-auto">
+        <div className="px-5 pt-4 pb-1">
+          <p className="text-sm font-semibold" style={{ color: "#16232E" }}>พลังงานแยกตามระบบ รายโรงงาน</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>ยอดรวมและสัดส่วนคำนวณอัตโนมัติจากตัวเลขที่กรอกด้านล่าง ไม่ต้องกรอกยอดรวมซ้ำ</p>
+        </div>
+        <table className="text-sm border-collapse w-full">
+          <thead>
+            <tr>
+              <th className="sticky left-0 z-10 bg-white text-left px-3 py-2.5 text-xs font-semibold border-b border-r" style={{ color: "#16232E", borderColor: BORDER, minWidth: 90 }}>
+                โรงงาน
+              </th>
+              {SYSTEM_TYPES.map((s) => (
+                <th key={s.key} className="text-center px-2 py-2.5 text-xs font-semibold border-b" style={{ color: s.color, borderColor: BORDER, minWidth: 110 }}>
+                  {s.label}
+                </th>
+              ))}
+              <th className="text-center px-2 py-2.5 text-xs font-semibold border-b border-l" style={{ color: "#16232E", borderColor: BORDER, minWidth: 100 }}>
+                รวม (kWh)
+              </th>
+              <th className="text-center px-2 py-2.5 text-xs font-semibold border-b" style={{ color: "#16232E", borderColor: BORDER, minWidth: 90 }}>
+                PF โรงงาน
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {ZONES.map((zone) => {
+              const ze = zoneEnergy[zone.key] || emptyZoneEnergy();
+              const zoneTotal = zoneTotalKwh(ze);
+              const sharePct = plantTotal > 0 ? Math.round((zoneTotal / plantTotal) * 100) : 0;
+              const pf = pfLabel(ze.pf);
+              return (
+                <tr key={zone.key}>
+                  <td className="sticky left-0 z-10 bg-white px-3 py-2 border-b border-r" style={{ borderColor: BORDER }}>
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold" style={{ color: zone.color }}>
+                      <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: zone.color }} />
+                      {zone.label}
+                    </span>
+                  </td>
+                  {SYSTEM_TYPES.map((s) => (
+                    <td key={s.key} className="px-2 py-1.5 border-b" style={{ borderColor: "#F0F2F5" }}>
+                      <input
+                        type="number" step="0.01"
+                        value={ze.systems?.[s.key] ?? ""}
+                        onChange={(e) => setZoneSystem(zone.key, s.key, e.target.value)}
+                        placeholder="0"
+                        className="w-full border rounded px-2 py-1.5 text-sm text-right"
+                        style={{ borderColor: BORDER }}
+                      />
+                    </td>
+                  ))}
+                  <td className="text-center px-2 py-1.5 border-b border-l" style={{ borderColor: BORDER }}>
+                    <p className="text-sm font-semibold" style={{ color: "#16232E" }}>{zoneTotal.toLocaleString()}</p>
+                    <p className="text-[10px]" style={{ color: MUTED }}>{sharePct}% ของรวม</p>
+                  </td>
+                  <td className="px-2 py-1.5 border-b" style={{ borderColor: BORDER }}>
+                    <input
+                      type="number" step="0.01" value={ze.pf}
+                      onChange={(e) => setZonePf(zone.key, e.target.value)}
+                      placeholder="0.00"
+                      className="w-full border rounded px-2 py-1.5 text-sm text-right"
+                      style={{ borderColor: BORDER }}
+                    />
+                    <p className="text-[10px] mt-0.5 text-center" style={{ color: pf.color }}>{ze.pf ? pf.text : ""}</p>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td className="sticky left-0 z-10 bg-white px-3 py-2.5 text-xs font-semibold border-t" style={{ color: "#16232E", borderColor: BORDER }}>
+                รวมทุกโรงงาน
+              </td>
+              {SYSTEM_TYPES.map((s) => (
+                <td key={s.key} className="text-center px-2 py-2.5 text-xs font-semibold border-t" style={{ color: s.color, borderColor: BORDER }}>
+                  {systemTypeTotal(zoneEnergy, s.key).toLocaleString()}
+                </td>
+              ))}
+              <td className="text-center px-2 py-2.5 text-sm font-bold border-t border-l" style={{ color: NAVY, borderColor: BORDER }}>
+                {plantTotal.toLocaleString()}
+              </td>
+              <td className="border-t" style={{ borderColor: BORDER }} />
+            </tr>
+          </tfoot>
+        </table>
+      </Card>
+
+      {!hideSaveButton && (
+        <div className="flex justify-end">
+          <button
+            onClick={onSaveZone}
+            disabled={saving || loading}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium text-white disabled:opacity-60"
+            style={{ backgroundColor: NAVY }}
+          >
+            <Save size={15} />
+            {saving ? "กำลังบันทึก..." : "บันทึกพลังงานรายโรงงาน"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Plant Energy Dashboard — trend per plant + cross-plant comparison,
+// built from the zoneenergy history already being saved by ZoneEnergyTab.
+// ---------------------------------------------------------------------------
+function PlantEnergyDashboard({ zoneHistory, energyHistory, config }) {
+  const [view, setView] = useState("trend"); // trend | compare | quality | carbon
+  const [selectedZone, setSelectedZone] = useState("A");
+
+  const latestZone = [...zoneHistory].reverse().find((r) => r.data && Object.keys(r.data).length > 0);
+  const latestEnergyRow = [...energyHistory].reverse().find((r) => r.energy);
+
+  // Merge the two histories by date so every chart has both the zone
+  // breakdown and the plant-wide meter reading for that day.
+  const mergedDates = Array.from(new Set([...zoneHistory.map((r) => r.date), ...energyHistory.map((r) => r.date)])).sort();
+  const merged = mergedDates.map((date) => {
+    const z = zoneHistory.find((r) => r.date === date)?.data;
+    const e = energyHistory.find((r) => r.date === date)?.energy;
+    const totalKwh = z ? plantTotalKwh(z) : null;
+    const production = e?.production ? num(e.production) : null;
+    return {
+      date,
+      totalKwh,
+      sec: totalKwh && production ? totalKwh / production : null,
+      cost: totalKwh ? totalKwh * num(config.tariffThbPerKwh) : null,
+      peak: e?.peak ? num(e.peak) : null,
+      mainPf: e?.mainPf ? num(e.mainPf) : null,
+      loadFactor: e?.peak && totalKwh ? loadFactorPct(totalKwh, e.peak) : null,
+    };
+  });
+  const validKwhPoints = merged.filter((m) => m.totalKwh !== null);
+
+  // --- Baseline / EnPI / CUSUM (ISO 50001 & IPMVP-style measurement & verification) ---
+  const baselineN = Math.max(1, parseInt(config.baselineDays, 10) || 30);
+  const baselineSet = validKwhPoints.slice(0, baselineN);
+  const baselineAvg = baselineSet.length >= 3 ? baselineSet.reduce((s, d) => s + d.totalKwh, 0) / baselineSet.length : null;
+  let cusum = 0;
+  const cusumSeries = validKwhPoints.map((d) => {
+    cusum += baselineAvg !== null ? baselineAvg - d.totalKwh : 0;
+    return { date: fmtShort(d.date), cusum: baselineAvg !== null ? Math.round(cusum) : null, kwh: d.totalKwh };
+  });
+  const latestKwh = validKwhPoints[validKwhPoints.length - 1]?.totalKwh ?? null;
+  const enpiPct = baselineAvg && latestKwh !== null ? (latestKwh / baselineAvg) * 100 : null;
+  const targetPct = num(config.targetReductionPct);
+  const targetProgress = baselineAvg && latestKwh !== null && targetPct > 0
+    ? Math.min(100, Math.max(0, (((baselineAvg - latestKwh) / baselineAvg) / (targetPct / 100)) * 100))
+    : null;
+
+  // --- Cross-zone comparison (stacked by system type) ---
+  const stackedByZone = ZONES.map((z) => {
+    const ze = latestZone?.data?.[z.key];
+    const row = { zone: z.label.replace("Plant.", "") };
+    SYSTEM_TYPES.forEach((s) => { row[s.key] = ze ? num(ze.systems?.[s.key]) : 0; });
+    return row;
+  });
+
+  // --- System-type share (donut) across the whole plant, latest date ---
+  const systemShare = SYSTEM_TYPES.map((s) => ({
+    name: s.label,
+    value: latestZone ? systemTypeTotal(latestZone.data, s.key) : 0,
+    color: s.color,
+  })).filter((s) => s.value > 0);
+  const systemShareTotal = systemShare.reduce((s, x) => s + x.value, 0);
+
+  // --- Per-zone trend (for the zone picker under "compare") ---
+  const trendForZone = zoneHistory.map((r) => ({
+    date: fmtShort(r.date),
+    kwh: r.data?.[selectedZone] ? zoneTotalKwh(r.data[selectedZone]) : null,
+    pf: r.data?.[selectedZone]?.pf ? parseFloat(r.data[selectedZone].pf) : null,
+  }));
+
+  // --- Power quality across zones (latest date) ---
+  const pfRows = ZONES.map((z) => {
+    const ze = latestZone?.data?.[z.key];
+    return { zone: z.label, pf: ze?.pf ? parseFloat(ze.pf) : null, color: z.color };
+  });
+  const mainPenalty = latestEnergyRow ? pfPenaltyEstimate(latestEnergyRow.energy.peak, latestEnergyRow.energy.mainPf, config) : null;
+
+  // --- Data-driven insights (computed facts only, no invented causes) ---
+  const insights = [];
+  if (latestZone) {
+    const zoneTotals = ZONES.map((z) => ({ z, total: zoneTotalKwh(latestZone.data[z.key]) })).sort((a, b) => b.total - a.total);
+    if (zoneTotals[0]?.total > 0) {
+      const pct = systemShareTotal > 0 ? Math.round((zoneTotals[0].total / plantTotalKwh(latestZone.data)) * 100) : 0;
+      insights.push(`${zoneTotals[0].z.label} ใช้พลังงานสูงสุดในวันที่มีข้อมูลล่าสุด (${pct}% ของทั้งหมด)`);
+    }
+    const sysTotals = SYSTEM_TYPES.map((s) => ({ s, total: systemTypeTotal(latestZone.data, s.key) })).sort((a, b) => b.total - a.total);
+    if (sysTotals[0]?.total > 0) {
+      const pct = systemShareTotal > 0 ? Math.round((sysTotals[0].total / systemShareTotal) * 100) : 0;
+      insights.push(`ระบบ ${sysTotals[0].s.label} เป็นสัดส่วนการใช้พลังงานสูงสุด (${pct}% ของทั้งหมด)`);
+    }
+    const lowPf = pfRows.filter((r) => r.pf !== null && r.pf < num(config.pfTarget));
+    if (lowPf.length > 0) insights.push(`PF ต่ำกว่าเป้าหมาย (${config.pfTarget}) ใน ${lowPf.map((r) => r.zone).join(", ")}`);
+  }
+  if (validKwhPoints.length >= 2) {
+    const diff = validKwhPoints[validKwhPoints.length - 1].totalKwh - validKwhPoints[validKwhPoints.length - 2].totalKwh;
+    const pct = validKwhPoints[validKwhPoints.length - 2].totalKwh > 0 ? Math.round((diff / validKwhPoints[validKwhPoints.length - 2].totalKwh) * 100) : 0;
+    insights.push(`พลังงานรวมเปลี่ยนแปลง ${diff >= 0 ? "เพิ่มขึ้น" : "ลดลง"} ${Math.abs(pct)}% เทียบกับการบันทึกครั้งก่อนหน้า`);
+  }
+
+  const views = [
+    { key: "trend", label: "แนวโน้ม & SEC", icon: TrendingUp },
+    { key: "compare", label: "เปรียบเทียบโรงงาน", icon: BarChart3 },
+    { key: "quality", label: "คุณภาพไฟฟ้า", icon: Activity },
+    { key: "carbon", label: "คาร์บอน & ต้นทุน", icon: Leaf },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <Card padded={false} className="flex gap-1 overflow-x-auto px-2 py-2">
+        {views.map((v) => {
+          const Icon = v.icon;
+          const active = view === v.key;
+          return (
+            <button
+              key={v.key}
+              onClick={() => setView(v.key)}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium whitespace-nowrap"
+              style={active ? { backgroundColor: `${NAVY}0F`, color: NAVY } : { color: MUTED }}
+            >
+              <Icon size={14} /> {v.label}
+            </button>
+          );
+        })}
+      </Card>
+
+      {insights.length > 0 && (
+        <Card>
+          <p className="text-xs font-semibold mb-2 flex items-center gap-1.5" style={{ color: "#16232E" }}>
+            <Target size={13} color={NAVY} /> ข้อสังเกตจากข้อมูลล่าสุด (คำนวณอัตโนมัติ ไม่ใช่การคาดเดา)
+          </p>
+          <ul className="space-y-1">
+            {insights.map((t, i) => (
+              <li key={i} className="text-xs flex items-start gap-1.5" style={{ color: MUTED }}>
+                <span className="mt-1.5 w-1 h-1 rounded-full flex-shrink-0" style={{ backgroundColor: NAVY }} /> {t}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {view === "trend" && (
+        <>
+          <Card>
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+              <p className="text-sm font-semibold flex items-center gap-2" style={{ color: "#16232E" }}>
+                <TrendingUp size={16} color={NAVY} /> พลังงานรวม &amp; SEC รายวัน
+              </p>
+              {baselineAvg !== null && (
+                <Pill color={enpiPct <= 100 ? GREEN : RED}>
+                  EnPI: {enpiPct.toFixed(1)}% ของเส้นฐาน
+                </Pill>
+              )}
+            </div>
+            {validKwhPoints.length === 0 ? (
+              <EmptyState icon={TrendingUp} text="ยังไม่มีข้อมูลพลังงานเพียงพอสำหรับกราฟ" />
+            ) : (
+              <ResponsiveContainer width="100%" height={250}>
+                <ComposedChart data={merged.map((m) => ({ ...m, date: fmtShort(m.date) }))} margin={{ top: 5, right: 10, bottom: 0, left: -20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F4" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: MUTED }} />
+                  <YAxis yAxisId="kwh" tick={{ fontSize: 11, fill: MUTED }} />
+                  <YAxis yAxisId="sec" orientation="right" tick={{ fontSize: 11, fill: MUTED }} />
+                  <Tooltip />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar yAxisId="kwh" dataKey="totalKwh" name="Total Energy (kWh)" fill={NAVY} radius={[4, 4, 0, 0]} />
+                  <Line yAxisId="sec" type="monotone" dataKey="sec" name="SEC (kWh/หน่วย)" stroke={AMBER} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                </ComposedChart>
+              </ResponsiveContainer>
+            )}
+            <p className="text-[10px] mt-2" style={{ color: MUTED }}>
+              SEC = พลังงานรวม ÷ จำนวนหน่วยผลิต (กรอกจำนวนหน่วยผลิตที่แท็บ &quot;บันทึกข้อมูล&quot; เพื่อให้คำนวณได้)
+            </p>
+          </Card>
+
+          <Card>
+            <p className="text-sm font-semibold mb-1 flex items-center gap-2" style={{ color: "#16232E" }}>
+              <Target size={16} color={NAVY} /> CUSUM เทียบเส้นฐาน (Baseline/M&amp;V ตามแนวทาง ISO 50001 / IPMVP)
+            </p>
+            <p className="text-[11px] mb-3" style={{ color: MUTED }}>
+              เส้นฐาน = ค่าเฉลี่ยพลังงาน {baselineN} วันแรกที่มีข้อมูล ({baselineAvg !== null ? `${baselineAvg.toLocaleString(undefined, { maximumFractionDigits: 0 })} kWh/วัน` : "ข้อมูลยังไม่พอ"}).
+              เส้นกราฟสูงขึ้น = ใช้พลังงานน้อยกว่าเส้นฐานสะสม (ประหยัดได้จริง), เส้นกราฟต่ำลง = ใช้มากกว่าเส้นฐานสะสม
+            </p>
+            {baselineAvg === null ? (
+              <EmptyState icon={Target} text={`ต้องมีข้อมูลอย่างน้อย 3 วันจึงจะคำนวณเส้นฐานได้ (ตั้งไว้ ${baselineN} วัน ปรับได้ที่ตั้งค่า)`} />
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={cusumSeries} margin={{ top: 5, right: 10, bottom: 0, left: -10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F4" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: MUTED }} />
+                  <YAxis tick={{ fontSize: 11, fill: MUTED }} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="cusum" name="CUSUM สะสม (kWh ประหยัดได้)" stroke={GREEN} strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+            {targetProgress !== null && (
+              <div className="mt-4">
+                <div className="flex items-center justify-between text-xs mb-1">
+                  <span style={{ color: MUTED }}>ความคืบหน้าเป้าหมายลดพลังงาน {config.targetReductionPct}%</span>
+                  <span style={{ color: NAVY, fontWeight: 600 }}>{targetProgress.toFixed(0)}%</span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden">
+                  <div className="h-full rounded-full" style={{ width: `${targetProgress}%`, backgroundColor: targetProgress >= 100 ? GREEN : AMBER }} />
+                </div>
+              </div>
+            )}
+          </Card>
+        </>
+      )}
+
+      {view === "compare" && (
+        <>
+          <Card>
+            <p className="text-sm font-semibold mb-4 flex items-center gap-2" style={{ color: "#16232E" }}>
+              <BarChart3 size={16} color={NAVY} /> พลังงานแยกระบบ รายโรงงาน{latestZone ? ` (ล่าสุด ${latestZone.date})` : ""}
+            </p>
+            {!latestZone ? (
+              <EmptyState icon={Zap} text="ยังไม่มีข้อมูล — กรอกได้ที่แท็บ 'พลังงาน' โหมดบันทึกข้อมูล" />
+            ) : (
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={stackedByZone} margin={{ top: 5, right: 10, bottom: 0, left: -20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F4" />
+                  <XAxis dataKey="zone" tick={{ fontSize: 12, fill: MUTED }} />
+                  <YAxis tick={{ fontSize: 11, fill: MUTED }} />
+                  <Tooltip />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  {SYSTEM_TYPES.map((s) => (
+                    <Bar key={s.key} dataKey={s.key} name={s.label} stackId="a" fill={s.color} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card>
+              <p className="text-sm font-semibold mb-4 flex items-center gap-2" style={{ color: "#16232E" }}>
+                <PieChartIcon size={16} color={NAVY} /> สัดส่วนการใช้พลังงานตามระบบ
+              </p>
+              {systemShare.length === 0 ? (
+                <EmptyState icon={PieChartIcon} text="ยังไม่มีข้อมูล" />
+              ) : (
+                <ResponsiveContainer width="100%" height={220}>
+                  <PieChart>
+                    <Pie data={systemShare} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={2}>
+                      {systemShare.map((s, i) => <Cell key={i} fill={s.color} />)}
+                    </Pie>
+                    <Tooltip />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </Card>
+
+            <Card>
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                <p className="text-sm font-semibold flex items-center gap-2" style={{ color: "#16232E" }}>
+                  <TrendingUp size={16} color={NAVY} /> แนวโน้มรายโรงงาน
+                </p>
+                <div className="flex gap-1">
+                  {ZONES.map((z) => (
+                    <button
+                      key={z.key} onClick={() => setSelectedZone(z.key)}
+                      className="px-2.5 py-1 rounded-md text-[11px] font-medium border"
+                      style={selectedZone === z.key
+                        ? { backgroundColor: `${z.color}1A`, color: z.color, borderColor: z.color }
+                        : { backgroundColor: "#FFF", color: MUTED, borderColor: BORDER }}
+                    >
+                      {z.key}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {trendForZone.every((d) => d.kwh === null) ? (
+                <EmptyState icon={TrendingUp} text="ยังไม่มีข้อมูลของโรงงานนี้" />
+              ) : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={trendForZone} margin={{ top: 5, right: 10, bottom: 0, left: -20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F4" />
+                    <XAxis dataKey="date" tick={{ fontSize: 10, fill: MUTED }} />
+                    <YAxis tick={{ fontSize: 10, fill: MUTED }} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="kwh" name="kWh" stroke={NAVY} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </Card>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            {ZONES.map((z) => {
+              const ze = latestZone?.data?.[z.key];
+              const total = zoneTotalKwh(ze);
+              const pf = pfLabel(ze?.pf);
+              return (
+                <Card key={z.key} className="text-center">
+                  <p className="text-xs font-semibold mb-1" style={{ color: z.color }}>{z.label}</p>
+                  <p className="text-lg font-semibold" style={{ color: "#16232E" }}>{total || "–"}</p>
+                  <p className="text-[10px]" style={{ color: MUTED }}>kWh</p>
+                  <p className="text-[11px] mt-1" style={{ color: pf.color }}>{ze?.pf ? `PF ${ze.pf}` : "ไม่มีข้อมูล PF"}</p>
+                </Card>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {view === "quality" && (
+        <>
+          <Card>
+            <p className="text-sm font-semibold mb-4 flex items-center gap-2" style={{ color: "#16232E" }}>
+              <Activity size={16} color={NAVY} /> Power Factor รายโรงงาน{latestZone ? ` (ล่าสุด ${latestZone.date})` : ""} — เป้าหมาย {config.pfTarget}
+            </p>
+            {!latestZone ? (
+              <EmptyState icon={Activity} text="ยังไม่มีข้อมูล" />
+            ) : (
+              <div className="space-y-2">
+                {pfRows.map((r) => (
+                  <div key={r.zone} className="flex items-center gap-3">
+                    <span className="text-xs w-16 flex-shrink-0" style={{ color: r.color }}>{r.zone}</span>
+                    <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                      <div
+                        className="h-full rounded-full"
+                        style={{ width: `${r.pf ? Math.min(100, r.pf * 100) : 0}%`, backgroundColor: r.pf === null ? "#D5DAE0" : r.pf < num(config.pfTarget) ? RED : GREEN }}
+                      />
+                    </div>
+                    <span className="text-xs w-12 text-right" style={{ color: MUTED }}>{r.pf ?? "–"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          <Card>
+            <p className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: "#16232E" }}>
+              <AlertTriangle size={16} color={NAVY} /> ประเมินความเสี่ยงค่าปรับ PF (มิเตอร์หลัก)
+            </p>
+            {!latestEnergyRow ? (
+              <EmptyState icon={AlertTriangle} text="ยังไม่มีข้อมูล Peak Demand / PF มิเตอร์หลัก" />
+            ) : mainPenalty === null ? (
+              <p className="text-xs" style={{ color: MUTED }}>กรอก Peak Demand และ PF มิเตอร์หลักให้ครบเพื่อประเมิน</p>
+            ) : mainPenalty.kvar === 0 ? (
+              <p className="text-xs flex items-center gap-1.5" style={{ color: GREEN }}>
+                <CheckCircle2 size={14} /> PF อยู่ในเกณฑ์เป้าหมายแล้ว ไม่มีความเสี่ยงค่าปรับ
+              </p>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs" style={{ color: "#16232E" }}>
+                  Reactive power ส่วนเกินโดยประมาณ: <span className="font-semibold" style={{ color: RED }}>{mainPenalty.kvar.toFixed(1)} kVAR</span>
+                  {" "}(คำนวณจาก kW × (tanφ<sub>ปัจจุบัน</sub> − tanφ<sub>เป้าหมาย</sub>))
+                </p>
+                {mainPenalty.cost !== null ? (
+                  <p className="text-xs" style={{ color: RED }}>
+                    ค่าปรับโดยประมาณ: {mainPenalty.cost.toLocaleString(undefined, { maximumFractionDigits: 0 })} บาท/รอบบิล (ตามอัตราที่ตั้งค่าไว้)
+                  </p>
+                ) : (
+                  <p className="text-xs" style={{ color: AMBER }}>
+                    ระบุ &quot;อัตราค่าปรับ PF (บาท/kVAR)&quot; ในตั้งค่า เพื่อประมาณการค่าใช้จ่ายที่อาจเกิดขึ้น
+                  </p>
+                )}
+                <p className="text-[10px]" style={{ color: MUTED }}>
+                  ตัวเลขนี้เป็นการประมาณการเชิงวิศวกรรมเพื่อการเฝ้าระวังเท่านั้น ไม่ใช่ยอดตามใบแจ้งหนี้จริง ซึ่งขึ้นกับรอบการอ่านหน่วยของการไฟฟ้า
+                </p>
+              </div>
+            )}
+          </Card>
+
+          <Card>
+            <p className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: "#16232E" }}>
+              <Gauge size={16} color={NAVY} /> Load Factor แนวโน้ม
+            </p>
+            {merged.filter((m) => m.loadFactor !== null).length === 0 ? (
+              <EmptyState icon={Gauge} text="กรอก Peak Demand ให้ครบเพื่อคำนวณ Load Factor" />
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={merged.map((m) => ({ ...m, date: fmtShort(m.date) }))} margin={{ top: 5, right: 10, bottom: 0, left: -20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F4" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: MUTED }} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: MUTED }} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="loadFactor" name="Load Factor (%)" stroke={NAVY} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+            <p className="text-[10px] mt-2" style={{ color: MUTED }}>
+              Load Factor = (พลังงานเฉลี่ย ÷ Peak Demand) × 100% — ยิ่งสูงยิ่งใช้ไฟสม่ำเสมอ ลดต้นทุน demand charge
+            </p>
+          </Card>
+        </>
+      )}
+
+      {view === "carbon" && (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <Card className="text-center">
+              <p className="text-xs" style={{ color: MUTED }}>ค่าไฟฟ้าล่าสุดโดยประมาณ</p>
+              <p className="text-2xl font-semibold mt-1" style={{ color: NAVY }}>
+                {latestKwh !== null ? (latestKwh * num(config.tariffThbPerKwh)).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "–"}
+              </p>
+              <p className="text-[10px]" style={{ color: MUTED }}>บาท (@ {config.tariffThbPerKwh || "N/A"} บาท/kWh)</p>
+            </Card>
+            <Card className="text-center">
+              <p className="text-xs" style={{ color: MUTED }}>CO2e ล่าสุดโดยประมาณ</p>
+              <p className="text-2xl font-semibold mt-1" style={{ color: latestKwh !== null && co2eKg(latestKwh, config) !== null ? GREEN : MUTED }}>
+                {latestKwh !== null && co2eKg(latestKwh, config) !== null ? co2eKg(latestKwh, config).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "N/A"}
+              </p>
+              <p className="text-[10px]" style={{ color: MUTED }}>
+                {config.carbonFactorKgPerKwh ? `kgCO2e (@ ${config.carbonFactorKgPerKwh} kgCO2e/kWh)` : "ระบุ Emission Factor ในตั้งค่า"}
+              </p>
+            </Card> 
+            
+            <Card className="text-center">
+              <p className="text-xs" style={{ color: MUTED }}>EnPI เทียบเส้นฐาน</p>
+              <p className="text-2xl font-semibold mt-1" style={{ color: enpiPct !== null ? (enpiPct <= 100 ? GREEN : RED) : MUTED }}>
+                {enpiPct !== null ? `${enpiPct.toFixed(1)}%` : "N/A"}
+              </p>
+              <p className="text-[10px]" style={{ color: MUTED }}>100% = เท่าเส้นฐาน, ต่ำกว่า 100% = ประหยัดกว่าเส้นฐาน</p>
+            </Card>
+          </div>
+
+          <Card>
+            <p className="text-sm font-semibold mb-4 flex items-center gap-2" style={{ color: "#16232E" }}>
+              <Leaf size={16} color={GREEN} /> แนวโน้มต้นทุนพลังงาน
+            </p>
+            {merged.filter((m) => m.cost !== null).length === 0 ? (
+              <EmptyState icon={Leaf} text="ยังไม่มีข้อมูล" />
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChartCost data={merged.map((m) => ({ ...m, date: fmtShort(m.date) }))} />
+              </ResponsiveContainer>
+            )}
+            <p className="text-[10px] mt-2" style={{ color: MUTED }}>
+              ต้นทุน = พลังงานรวม × อัตราค่าไฟที่ตั้งค่าไว้ ({config.tariffThbPerKwh || "N/A"} บาท/kWh) — เป็นการประมาณการ ไม่รวมค่า Ft/ค่าบริการอื่นตามใบแจ้งหนี้จริง
+            </p>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+function AreaChartCost({ data }) {
+  return (
+    <ComposedChart data={data} margin={{ top: 5, right: 10, bottom: 0, left: -20 }}>
+      <defs>
+        <linearGradient id="costFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%" stopColor={GREEN} stopOpacity={0.35} />
+          <stop offset="95%" stopColor={GREEN} stopOpacity={0.02} />
+        </linearGradient>
+      </defs>
+      <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F4" />
+      <XAxis dataKey="date" tick={{ fontSize: 11, fill: MUTED }} />
+      <YAxis tick={{ fontSize: 11, fill: MUTED }} />
+      <Tooltip />
+      <Area type="monotone" dataKey="cost" name="ต้นทุนพลังงาน (บาท)" stroke={GREEN} fill="url(#costFill)" strokeWidth={2} connectNulls />
+    </ComposedChart>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Plant-wide energy tab
+// ---------------------------------------------------------------------------
+function EnergyConfigPanel({ config, setConfig, onSave, saving }) {
+  const [open, setOpen] = useState(false);
+  const fields = [
+    { key: "tariffThbPerKwh", label: "ค่าไฟฟ้า (บาท/kWh)", hint: "ค่าเริ่มต้นของบริษัท 3.50 บาท/หน่วย ปรับตามใบแจ้งหนี้จริงได้" },
+    { key: "pfTarget", label: "PF เป้าหมาย", hint: "เกณฑ์ทั่วไปที่การไฟฟ้าใช้พิจารณาค่าปรับ PF คือ 0.85 ปรับได้ตามสัญญาจริง" },
+    { key: "pfPenaltyRatePerKvar", label: "อัตราค่าปรับ PF (บาท/kVAR)", hint: "ระบุจากใบแจ้งหนี้การไฟฟ้าของท่าน — ไม่มีค่ากลางที่ใช้ได้ทุกที่" },
+    { key: "carbonFactorKgPerKwh", label: "Emission Factor (kgCO2e/kWh)", hint: "ใช้ค่าที่เผยแพร่ล่าสุดจาก EGAT/TGO — เปลี่ยนแปลงเป็นรายปี" },
+    { key: "targetReductionPct", label: "เป้าหมายลดพลังงาน (%)", hint: "เทียบกับค่าเฉลี่ยเส้นฐาน (Baseline)" },
+    { key: "baselineDays", label: "จำนวนวันคำนวณเส้นฐาน (Baseline)", hint: "ค่าเฉลี่ยของ N วันแรกที่มีข้อมูล ใช้เป็นเส้นฐานเปรียบเทียบ (EnPI/CUSUM)" },
+  ];
+
+  return (
+    <Card padded={false}>
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-5 py-3.5">
+        <span className="flex items-center gap-2 text-sm font-semibold" style={{ color: "#16232E" }}>
+          <Settings size={15} color={MUTED} /> ตั้งค่าพารามิเตอร์วิศวกรรมพลังงาน
+        </span>
+        {open ? <ChevronDown size={16} color={MUTED} /> : <ChevronRight size={16} color={MUTED} />}
+      </button>
+      {open && (
+        <div className="border-t px-5 py-4" style={{ borderColor: BORDER }}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {fields.map((f) => (
+              <div key={f.key}>
+                <label className="text-xs font-medium" style={{ color: "#16232E" }}>{f.label}</label>
+                <input
+                  type="number" step="0.01"
+                  value={config[f.key] ?? ""}
+                  onChange={(e) => setConfig((p) => ({ ...p, [f.key]: e.target.value }))}
+                  placeholder="N/A"
+                  className="w-full mt-1 border rounded px-2.5 py-1.5 text-sm"
+                  style={{ borderColor: BORDER }}
+                />
+                <p className="text-[10px] mt-1" style={{ color: MUTED }}>{f.hint}</p>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end mt-4">
+            <button
+              onClick={onSave} disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium text-white disabled:opacity-60"
+              style={{ backgroundColor: NAVY }}
+            >
+              <Save size={13} /> บันทึกการตั้งค่า
+            </button>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function StatTile({ label, value, unit, color = "#16232E", sub }) {
+  return (
+    <div className="rounded-lg p-3" style={{ backgroundColor: "#F7F9FA" }}>
+      <p className="text-[11px]" style={{ color: MUTED }}>{label}</p>
+      <p className="text-lg font-semibold mt-0.5" style={{ color }}>
+        {value}
+        {unit && <span className="text-xs font-normal ml-1" style={{ color: MUTED }}>{unit}</span>}
+      </p>
+      {sub && <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>{sub}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Energy entry — merges the plant-wide meter form with the per-zone/system
+// breakdown table into one flow (one date picker, one save action) since
+// both describe the same day's energy picture.
+// ---------------------------------------------------------------------------
+function EnergyEntryTab({ selectedDate, setSelectedDate, energy, setEnergy, zoneEnergy, setZoneSystem, setZonePf, config, setConfig, onSaveConfig, onSaveAll, saving, loading }) {
+  const totalKwh = plantTotalKwh(zoneEnergy);
+  const cost = totalKwh * num(config.tariffThbPerKwh);
+  const production = num(energy.production);
+  const sec = production > 0 ? totalKwh / production : null;
+  const lf = loadFactorPct(totalKwh, energy.peak);
+  const penalty = pfPenaltyEstimate(energy.peak, energy.mainPf, config);
+  const mainPfLabel = pfLabel(energy.mainPf);
+
+  return (
+    <div className="space-y-5">
+      <Card className="flex items-center gap-3 flex-wrap">
+        <Calendar size={16} color={MUTED} />
+        <label className="text-sm" style={{ color: MUTED }}>วันที่บันทึก:</label>
+        <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="border rounded px-2 py-1.5 text-sm" style={{ borderColor: BORDER }} />
+      </Card>
+
+      <EnergyConfigPanel config={config} setConfig={setConfig} onSave={onSaveConfig} saving={saving} />
+
+      <Card>
+        <p className="text-sm font-semibold mb-4" style={{ color: "#16232E" }}>มิเตอร์หลัก &amp; กำลังการผลิต (กรอกด้วยมือ)</p>
+        {loading ? (
+          <EmptyState icon={Zap} text="กำลังโหลดข้อมูล..." />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label className="text-xs" style={{ color: MUTED }}>Peak Demand (kW)</label>
+              <input type="number" step="0.01" value={energy.peak} onChange={(e) => setEnergy((p) => ({ ...p, peak: e.target.value }))} placeholder="กรอกค่า" className="w-full mt-1 border rounded px-3 py-2 text-sm" style={{ borderColor: BORDER }} />
+            </div>
+            <div>
+              <label className="text-xs" style={{ color: MUTED }}>PF มิเตอร์หลัก</label>
+              <input type="number" step="0.01" value={energy.mainPf} onChange={(e) => setEnergy((p) => ({ ...p, mainPf: e.target.value }))} placeholder="กรอกค่า" className="w-full mt-1 border rounded px-3 py-2 text-sm" style={{ borderColor: BORDER }} />
+            </div>
+            <div>
+              <label className="text-xs" style={{ color: MUTED }}>จำนวนหน่วยผลิต (สำหรับคำนวณ SEC)</label>
+              <input type="number" step="1" value={energy.production} onChange={(e) => setEnergy((p) => ({ ...p, production: e.target.value }))} placeholder="กรอกค่า" className="w-full mt-1 border rounded px-3 py-2 text-sm" style={{ borderColor: BORDER }} />
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
+          <StatTile label="Total Energy (คำนวณจากตารางด้านล่าง)" value={totalKwh.toLocaleString()} unit="kWh" color={NAVY} />
+          <StatTile label="ค่าไฟฟ้าประมาณการ" value={cost ? cost.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "–"} unit="บาท" color={NAVY} />
+          <StatTile label="SEC" value={sec !== null ? sec.toFixed(3) : "N/A"} unit={sec !== null ? "kWh/หน่วย" : ""} sub={production <= 0 ? "กรอกจำนวนหน่วยผลิตก่อน" : undefined} />
+          <StatTile label="Load Factor" value={lf !== null ? lf.toFixed(1) : "N/A"} unit={lf !== null ? "%" : ""} sub="ประสิทธิภาพการใช้ไฟเทียบ Peak" />
+        </div>
+
+        <div className="mt-3 flex items-center gap-2 text-xs" style={{ color: mainPfLabel.color }}>
+          <Activity size={13} /> สถานะ PF มิเตอร์หลัก: {mainPfLabel.text}
+          {penalty && penalty.kvar > 0 && (
+            <span className="ml-2" style={{ color: RED }}>
+              · ต้องลด reactive power ~{penalty.kvar.toFixed(1)} kVAR เพื่อถึงเป้าหมาย
+              {penalty.cost !== null ? ` (≈ ${penalty.cost.toLocaleString(undefined, { maximumFractionDigits: 0 })} บาท/รอบบิล)` : " (ระบุอัตราค่าปรับในตั้งค่าเพื่อประมาณการค่าใช้จ่าย)"}
+            </span>
+          )}
+        </div>
+      </Card>
+
+      <ZoneEnergyTab
+        selectedDate={selectedDate}
+        setSelectedDate={setSelectedDate}
+        zoneEnergy={zoneEnergy}
+        setZoneSystem={setZoneSystem}
+        setZonePf={setZonePf}
+        onSaveZone={onSaveAll}
+        saving={saving}
+        loading={loading}
+        hideDatePicker
+        hideSaveButton
+      />
+
+      <div className="flex justify-end">
+        <button
+          onClick={onSaveAll}
+          disabled={saving || loading}
+          className="flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium text-white disabled:opacity-60 shadow-sm"
+          style={{ backgroundColor: NAVY }}
+        >
+          <Save size={16} />
+          {saving ? "กำลังบันทึก..." : "บันทึกข้อมูลพลังงานทั้งหมดของวันนี้"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// History tab
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// BESS (Battery Energy Storage System) tab — daily SOC / charge-discharge
+// entry per unit, plus a trend view with round-trip efficiency and
+// equivalent full-cycle counts. All formulas here are standard battery
+// engineering definitions (round-trip efficiency, equivalent cycles),
+// computed only from numbers the user enters — nothing fabricated.
+// ---------------------------------------------------------------------------
+const BESS_CATEGORY = CATEGORIES.find((c) => c.key === "bess");
+const BESS_UNITS = BESS_CATEGORY ? BESS_CATEGORY.items : [];
+
+const emptyBessUnitEntry = () => ({ socStart: "", socEnd: "", chargedKwh: "", dischargedKwh: "", avgTemp: "", note: "" });
+const emptyBessEntry = () => Object.fromEntries(BESS_UNITS.map((u) => [u.code, emptyBessUnitEntry()]));
+
+function bessUnitMetrics(unit, unitEntry) {
+  const charged = num(unitEntry?.chargedKwh);
+  const discharged = num(unitEntry?.dischargedKwh);
+  const efficiency = charged > 0 ? (discharged / charged) * 100 : null;
+  const equivalentCycles = unit.capacityKwh > 0 ? discharged / unit.capacityKwh : null;
+  return { charged, discharged, efficiency, equivalentCycles };
+}
+
+function BessTab({ selectedDate, setSelectedDate, bessEntry, setBessField, bessHistory, onSave, saving, loading }) {
+  const [view, setView] = useState("entry"); // entry | trend
+
+  // Cumulative equivalent-cycle count per unit, summed across all saved days.
+  const cumulativeCycles = useMemo(() => {
+    const totals = Object.fromEntries(BESS_UNITS.map((u) => [u.code, 0]));
+    bessHistory.forEach((row) => {
+      BESS_UNITS.forEach((u) => {
+        const m = bessUnitMetrics(u, row.data?.[u.code]);
+        if (m.equivalentCycles !== null) totals[u.code] += m.equivalentCycles;
+      });
+    });
+    return totals;
+  }, [bessHistory]);
+
+  const trendSeries = bessHistory.map((row) => {
+    const point = { date: fmtShort(row.date) };
+    let totalCharged = 0, totalDischarged = 0;
+    BESS_UNITS.forEach((u) => {
+      const m = bessUnitMetrics(u, row.data?.[u.code]);
+      point[`soc_${u.code}`] = row.data?.[u.code]?.socEnd ? num(row.data[u.code].socEnd) : null;
+      totalCharged += m.charged;
+      totalDischarged += m.discharged;
+    });
+    point.charged = totalCharged || null;
+    point.discharged = totalDischarged || null;
+    point.efficiency = totalCharged > 0 ? (totalDischarged / totalCharged) * 100 : null;
+    return point;
+  });
+
+  if (BESS_UNITS.length === 0) {
+    return <EmptyState icon={BatteryCharging} text="ยังไม่มีข้อมูลชุดแบตเตอรี่ในระบบ (Master data ว่าง)" />;
+  }
+
+  return (
+    <div className="space-y-5">
+      <Card padded={false} className="flex gap-1 p-1.5 w-fit">
+        <button
+          onClick={() => setView("entry")}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium"
+          style={view === "entry" ? { backgroundColor: `${NAVY}0F`, color: NAVY } : { color: MUTED }}
+        >
+          <ClipboardList size={14} /> บันทึกข้อมูลรายวัน
+        </button>
+        <button
+          onClick={() => setView("trend")}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium"
+          style={view === "trend" ? { backgroundColor: `${NAVY}0F`, color: NAVY } : { color: MUTED }}
+        >
+          <TrendingUp size={14} /> แนวโน้ม &amp; รอบการใช้งาน
+        </button>
+      </Card>
+
+      <Card className="text-xs" style={{ color: MUTED }}>
+        <span className="flex items-center gap-1.5">
+          <AlertTriangle size={13} color={AMBER} />
+          รหัสชุดแบตเตอรี่ (BESS-A01 ฯลฯ) และค่า Capacity/Power ตอนนี้เป็นค่าตัวอย่างเริ่มต้น — แก้ไขให้ตรงกับป้าย nameplate จริงของระบบกักเก็บพลังงานในไฟล์ก่อนใช้งานจริง
+        </span>
+      </Card>
+
+      {view === "entry" && (
+        <>
+          <Card className="flex items-center gap-3 flex-wrap">
+            <Calendar size={16} color={MUTED} />
+            <label className="text-sm" style={{ color: MUTED }}>วันที่บันทึก:</label>
+            <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="border rounded px-2 py-1.5 text-sm" style={{ borderColor: BORDER }} />
+          </Card>
+
+          {loading ? (
+            <EmptyState icon={BatteryCharging} text="กำลังโหลดข้อมูล..." />
+          ) : (
+            BESS_UNITS.map((unit) => {
+              const ue = bessEntry[unit.code] || emptyBessUnitEntry();
+              const m = bessUnitMetrics(unit, ue);
+              return (
+                <Card key={unit.code}>
+                  <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+                    <div>
+                      <p className="text-sm font-semibold flex items-center gap-2" style={{ color: "#16232E" }}>
+                        <BatteryCharging size={16} color={BESS_CATEGORY.color} /> {unit.code}
+                      </p>
+                      <p className="text-xs" style={{ color: MUTED }}>
+                        โซน {unit.zone} · Capacity {unit.capacityKwh?.toLocaleString() ?? "N/A"} kWh · Power {unit.powerKw?.toLocaleString() ?? "N/A"} kW
+                        {unit.note ? ` · ${unit.note}` : ""}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    <div>
+                      <label className="text-xs" style={{ color: MUTED }}>SOC เริ่มต้น (%)</label>
+                      <input type="number" step="0.1" value={ue.socStart} onChange={(e) => setBessField(unit.code, "socStart", e.target.value)} placeholder="0-100" className="w-full mt-1 border rounded px-2.5 py-1.5 text-sm" style={{ borderColor: BORDER }} />
+                    </div>
+                    <div>
+                      <label className="text-xs" style={{ color: MUTED }}>SOC สิ้นวัน (%)</label>
+                      <input type="number" step="0.1" value={ue.socEnd} onChange={(e) => setBessField(unit.code, "socEnd", e.target.value)} placeholder="0-100" className="w-full mt-1 border rounded px-2.5 py-1.5 text-sm" style={{ borderColor: BORDER }} />
+                    </div>
+                    <div>
+                      <label className="text-xs" style={{ color: MUTED }}>พลังงานชาร์จเข้า (kWh)</label>
+                      <input type="number" step="0.01" value={ue.chargedKwh} onChange={(e) => setBessField(unit.code, "chargedKwh", e.target.value)} placeholder="0" className="w-full mt-1 border rounded px-2.5 py-1.5 text-sm" style={{ borderColor: BORDER }} />
+                    </div>
+                    <div>
+                      <label className="text-xs" style={{ color: MUTED }}>พลังงานคายออก (kWh)</label>
+                      <input type="number" step="0.01" value={ue.dischargedKwh} onChange={(e) => setBessField(unit.code, "dischargedKwh", e.target.value)} placeholder="0" className="w-full mt-1 border rounded px-2.5 py-1.5 text-sm" style={{ borderColor: BORDER }} />
+                    </div>
+                    <div>
+                      <label className="text-xs" style={{ color: MUTED }}>อุณหภูมิเฉลี่ย (°C)</label>
+                      <input type="number" step="0.1" value={ue.avgTemp} onChange={(e) => setBessField(unit.code, "avgTemp", e.target.value)} placeholder="N/A" className="w-full mt-1 border rounded px-2.5 py-1.5 text-sm" style={{ borderColor: BORDER }} />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4">
+                    <StatTile label="Round-trip Efficiency" value={m.efficiency !== null ? m.efficiency.toFixed(1) : "N/A"} unit={m.efficiency !== null ? "%" : ""} sub="คาย ÷ ชาร์จ × 100" />
+                    <StatTile label="Equivalent Full Cycles (วันนี้)" value={m.equivalentCycles !== null ? m.equivalentCycles.toFixed(3) : "N/A"} sub="คายออก (kWh) ÷ Capacity (kWh)" />
+                    <StatTile label="รอบสะสมทั้งหมด" value={(cumulativeCycles[unit.code] || 0).toFixed(1)} sub="ผลรวมทุกวันที่บันทึกไว้" />
+                  </div>
+
+                  <div className="mt-3">
+                    <input
+                      type="text" placeholder="หมายเหตุ (เช่น Alarm ที่พบ, เหตุการณ์ผิดปกติ)"
+                      value={ue.note} onChange={(e) => setBessField(unit.code, "note", e.target.value)}
+                      className="w-full border rounded px-2.5 py-1.5 text-xs" style={{ borderColor: BORDER }}
+                    />
+                  </div>
+                </Card>
+              );
+            })
+          )}
+
+          <div className="flex justify-end">
+            <button
+              onClick={onSave}
+              disabled={saving || loading}
+              className="flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium text-white disabled:opacity-60 shadow-sm"
+              style={{ backgroundColor: NAVY }}
+            >
+              <Save size={16} />
+              {saving ? "กำลังบันทึก..." : "บันทึกข้อมูล BESS ของวันนี้"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {view === "trend" && (
+        <>
+          <Card>
+            <p className="text-sm font-semibold mb-4 flex items-center gap-2" style={{ color: "#16232E" }}>
+              <TrendingUp size={16} color={NAVY} /> พลังงานชาร์จ/คายประจุ รวมทุกชุด
+            </p>
+            {trendSeries.filter((d) => d.charged !== null || d.discharged !== null).length === 0 ? (
+              <EmptyState icon={TrendingUp} text="ยังไม่มีข้อมูลเพียงพอสำหรับกราฟ" />
+            ) : (
+              <ResponsiveContainer width="100%" height={240}>
+                <ComposedChart data={trendSeries} margin={{ top: 5, right: 10, bottom: 0, left: -20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F4" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: MUTED }} />
+                  <YAxis yAxisId="kwh" tick={{ fontSize: 11, fill: MUTED }} />
+                  <YAxis yAxisId="eff" orientation="right" domain={[0, 100]} tick={{ fontSize: 11, fill: MUTED }} />
+                  <Tooltip />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar yAxisId="kwh" dataKey="charged" name="ชาร์จเข้า (kWh)" fill="#2C6FB0" radius={[4, 4, 0, 0]} />
+                  <Bar yAxisId="kwh" dataKey="discharged" name="คายออก (kWh)" fill={AMBER} radius={[4, 4, 0, 0]} />
+                  <Line yAxisId="eff" type="monotone" dataKey="efficiency" name="Round-trip Efficiency (%)" stroke={GREEN} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                </ComposedChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+
+          <Card>
+            <p className="text-sm font-semibold mb-4 flex items-center gap-2" style={{ color: "#16232E" }}>
+              <BatteryCharging size={16} color={BESS_CATEGORY.color} /> SOC สิ้นวัน รายชุด
+            </p>
+            {trendSeries.length === 0 ? (
+              <EmptyState icon={BatteryCharging} text="ยังไม่มีข้อมูล" />
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={trendSeries} margin={{ top: 5, right: 10, bottom: 0, left: -20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F4" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: MUTED }} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: MUTED }} />
+                  <Tooltip />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  {BESS_UNITS.map((u, i) => (
+                    <Line
+                      key={u.code} type="monotone" dataKey={`soc_${u.code}`} name={u.code}
+                      stroke={["#2C6FB0", "#1F8A55", "#C0722A", "#6A4FA0", "#B0392C"][i % 5]}
+                      strokeWidth={2} dot={{ r: 3 }} connectNulls
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+
+          <Card padded={false} className="overflow-x-auto">
+            <div className="px-5 pt-4 pb-1">
+              <p className="text-sm font-semibold" style={{ color: "#16232E" }}>รอบการใช้งานสะสม (Equivalent Full Cycles) ต่อชุด</p>
+              <p className="text-xs mt-0.5" style={{ color: MUTED }}>ผลรวมจากทุกวันที่บันทึกไว้ — ใช้ประกอบการประเมินอายุการใช้งานเทียบกับรอบที่ผู้ผลิตรับประกัน</p>
+            </div>
+            <table className="text-sm border-collapse w-full mt-2">
+              <thead>
+                <tr>
+                  <th className="text-left px-4 py-2 text-xs font-semibold border-b" style={{ color: "#16232E", borderColor: BORDER }}>ชุดแบตเตอรี่</th>
+                  <th className="text-right px-4 py-2 text-xs font-semibold border-b" style={{ color: "#16232E", borderColor: BORDER }}>รอบสะสม (Equivalent Cycles)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {BESS_UNITS.map((u) => (
+                  <tr key={u.code}>
+                    <td className="px-4 py-2 border-b" style={{ borderColor: "#F0F2F5" }}>{u.code} <span style={{ color: MUTED }}>· โซน {u.zone}</span></td>
+                    <td className="text-right px-4 py-2 border-b font-medium" style={{ borderColor: "#F0F2F5", color: "#16232E" }}>{(cumulativeCycles[u.code] || 0).toFixed(1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+function HistoryTab({ historyEntries, zoneEnergyHistory }) {
+  const rows = [...historyEntries].reverse();
+  const zoneByDate = Object.fromEntries((zoneEnergyHistory || []).map((r) => [r.date, r.data]));
+  return (
+    <div className="bg-white rounded-xl border shadow-sm overflow-x-auto" style={{ borderColor: BORDER }}>
+      <table className="w-full text-sm min-w-[640px]">
+        <thead>
+          <tr style={{ backgroundColor: NAVY }}>
+            <th className="text-left px-4 py-2.5 text-white font-medium">วันที่</th>
+            <th className="text-left px-4 py-2.5 text-white font-medium">สุขภาพระบบ</th>
+            <th className="text-left px-4 py-2.5 text-white font-medium">Total Energy</th>
+            <th className="text-left px-4 py-2.5 text-white font-medium">Peak Demand</th>
+            <th className="text-left px-4 py-2.5 text-white font-medium">PF มิเตอร์หลัก</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && (
+            <tr><td colSpan={5} className="text-center py-10 text-sm" style={{ color: MUTED }}>ยังไม่มีประวัติการบันทึก</td></tr>
+          )}
+          {rows.map((r) => {
+            const score = r.entry ? overallScore(r.entry) : null;
+            const lbl = healthLabel(score);
+            const pf = pfLabel(r.energy?.mainPf);
+            const zoneData = zoneByDate[r.date];
+            const totalKwh = zoneData ? plantTotalKwh(zoneData) : null;
+            return (
+              <tr key={r.date} className="border-t" style={{ borderColor: "#F0F2F5" }}>
+                <td className="px-4 py-2.5 font-medium" style={{ color: "#16232E" }}>{r.date}</td>
+                <td className="px-4 py-2.5"><span style={{ color: lbl.color }}>{score === null ? "–" : `${score}%`}</span></td>
+                <td className="px-4 py-2.5" style={{ color: MUTED }}>{totalKwh !== null ? `${totalKwh.toLocaleString()} kWh` : "-"}</td>
+                <td className="px-4 py-2.5" style={{ color: MUTED }}>{r.energy?.peak || "-"} kW</td>
+                <td className="px-4 py-2.5" style={{ color: pf.color }}>{r.energy?.mainPf || "-"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+// ---------------------------------------------------------------------------
+// Main App
+// ---------------------------------------------------------------------------
+function UtilityHealthApp() {
+  const [tab, setTab] = useState("dashboard");
+  const [inspectView, setInspectView] = useState("detail"); // detail | grid
+  const [selectedDate, setSelectedDate] = useState(todayStr());
+  const [entry, setEntry] = useState(emptyEntry());
+  const [energy, setEnergy] = useState(emptyPlantEnergy());
+  const [zoneEnergy, setZoneEnergyState] = useState({});
+  const [config, setConfig] = useState(DEFAULT_ENERGY_CONFIG);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [openCats, setOpenCats] = useState(() => Object.fromEntries(CATEGORIES.map((c) => [c.key, false])));
+  const [historyEntries, setHistoryEntries] = useState([]);
+  const [zoneEnergyHistory, setZoneEnergyHistory] = useState([]);
+  const [latestEntry, setLatestEntry] = useState(null);
+  const [latestEnergy, setLatestEnergy] = useState(null);
+  const [latestZoneEnergy, setLatestZoneEnergy] = useState(null);
+  const [bessEntry, setBessEntryState] = useState(emptyBessEntry());
+  const [bessHistory, setBessHistory] = useState([]);
+
+  // Monthly grid state
+  const today = new Date();
+  const [gridYear, setGridYear] = useState(today.getFullYear());
+  const [gridMonth, setGridMonth] = useState(today.getMonth() + 1);
+  const [gridCategoryKey, setGridCategoryKey] = useState(CATEGORIES[0].key);
+  const [monthEntries, setMonthEntries] = useState({});
+  const [monthLoading, setMonthLoading] = useState(true);
+  const [savingCell, setSavingCell] = useState(null);
+
+  // Load the shared engineering config once on mount
+  useEffect(() => {
+    (async () => {
+      const c = await safeGet("config:energy");
+      if (c) setConfig({ ...DEFAULT_ENERGY_CONFIG, ...c });
+    })();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const [e, en, ze, be] = await Promise.all([
+        safeGet(`inspection:${selectedDate}`),
+        safeGet(`energy:${selectedDate}`),
+        safeGet(`zoneenergy:${selectedDate}`),
+        safeGet(`bess:${selectedDate}`),
+      ]);
+      if (cancelled) return;
+      setEntry(e || emptyEntry());
+      setEnergy(en || emptyPlantEnergy());
+      setZoneEnergyState(ze || {});
+      setBessEntryState(be || emptyBessEntry());
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [selectedDate]);
+
+  const refreshHistory = useCallback(async () => {
+    const [inspDates, energyDates, zoneDates] = await Promise.all([
+      listRecentDates("inspection:", 30),
+      listRecentDates("energy:", 30),
+      listRecentDates("zoneenergy:", 30),
+    ]);
+    const allDates = Array.from(new Set([...inspDates, ...energyDates])).sort();
+    const rows = await Promise.all(
+      allDates.map(async (d) => ({
+        date: d,
+        entry: await safeGet(`inspection:${d}`),
+        energy: await safeGet(`energy:${d}`),
+      }))
+    );
+    setHistoryEntries(rows);
+    const lastWithEntry = [...rows].reverse().find((r) => r.entry);
+    const lastWithEnergy = [...rows].reverse().find((r) => r.energy);
+    setLatestEntry(lastWithEntry || null);
+    setLatestEnergy(lastWithEnergy || null);
+
+    const zoneRows = await Promise.all(
+      zoneDates.map(async (d) => ({ date: d, data: await safeGet(`zoneenergy:${d}`) }))
+    );
+    setZoneEnergyHistory(zoneRows);
+    const lastWithZone = [...zoneRows].reverse().find((r) => r.data && Object.keys(r.data).length > 0);
+    setLatestZoneEnergy(lastWithZone || null);
+
+    const bessDates = await listRecentDates("bess:", 30);
+    const bessRows = await Promise.all(
+      bessDates.map(async (d) => ({ date: d, data: await safeGet(`bess:${d}`) }))
+    );
+    setBessHistory(bessRows.filter((r) => r.data));
+  }, []);
+
+  useEffect(() => { refreshHistory(); }, [refreshHistory]);
+
+  // Load the whole selected month for the grid tab
+  const loadMonth = useCallback(async (year, month) => {
+    setMonthLoading(true);
+    const n = daysInMonth(year, month);
+    const dates = Array.from({ length: n }, (_, i) => ymd(year, month, i + 1));
+    const results = await Promise.all(dates.map((d) => safeGet(`inspection:${d}`)));
+    const map = {};
+    dates.forEach((d, i) => { if (results[i]) map[d] = results[i]; });
+    setMonthEntries(map);
+    setMonthLoading(false);
+  }, []);
+
+  useEffect(() => { loadMonth(gridYear, gridMonth); }, [gridYear, gridMonth, loadMonth]);
+
+  const setYearMonth = (y, m) => { setGridYear(y); setGridMonth(m); };
+
+  const setResult = (unitCode, itemId, value) => {
+    setEntry((prev) => {
+      const results = { ...prev.results, [unitCode]: { ...prev.results[unitCode], [itemId]: value } };
+      if (value === undefined) delete results[unitCode][itemId];
+      return { ...prev, results };
+    });
+  };
+  const setSimpleStatus = (unitCode, value) => {
+    setEntry((prev) => ({
+      ...prev,
+      simpleStatus: { ...prev.simpleStatus, [unitCode]: prev.simpleStatus[unitCode] === value ? undefined : value },
+    }));
+  };
+  const setNote = (unitCode, value) => {
+    setEntry((prev) => ({ ...prev, notes: { ...prev.notes, [unitCode]: value } }));
+  };
+  const setValue = (unitCode, itemId, value) => {
+    setEntry((prev) => ({
+      ...prev,
+      notes: { ...prev.notes, [unitCode]: { ...(typeof prev.notes[unitCode] === "object" ? prev.notes[unitCode] : {}), [itemId]: value } },
+    }));
+  };
+  // Granular per-zone, per-system setters — the single place zone energy is edited.
+  const setZoneSystem = (zoneKey, systemKey, value) => {
+    setZoneEnergyState((prev) => {
+      const zone = prev[zoneKey] || emptyZoneEnergy();
+      return { ...prev, [zoneKey]: { ...zone, systems: { ...zone.systems, [systemKey]: value } } };
+    });
+  };
+  const setZonePf = (zoneKey, value) => {
+    setZoneEnergyState((prev) => {
+      const zone = prev[zoneKey] || emptyZoneEnergy();
+      return { ...prev, [zoneKey]: { ...zone, pf: value } };
+    });
+  };
+  const setBessField = (unitCode, field, value) => {
+    setBessEntryState((prev) => ({
+      ...prev,
+      [unitCode]: { ...(prev[unitCode] || emptyBessUnitEntry()), [field]: value },
+    }));
+  };
+
+  const handleSaveEntry = async () => {
+    setSaving(true);
+    try {
+      await safeSet(`inspection:${selectedDate}`, entry);
+      await refreshHistory();
+      setMonthEntries((prev) => ({ ...prev, [selectedDate]: entry }));
+      setToast("บันทึกผลตรวจแล้ว — ทีมทั้งหมดจะเห็นข้อมูลนี้");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // One button saves the plant-wide meter reading AND the per-zone/system
+  // breakdown together, since both describe the same day's energy picture.
+  const handleSaveAllEnergy = async () => {
+    setSaving(true);
+    try {
+      await Promise.all([
+        safeSet(`energy:${selectedDate}`, energy),
+        safeSet(`zoneenergy:${selectedDate}`, zoneEnergy),
+      ]);
+      await refreshHistory();
+      setToast("บันทึกข้อมูลพลังงานของวันนี้แล้ว (รวมรายโซน) — ทีมทั้งหมดจะเห็นข้อมูลนี้");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveBess = async () => {
+    setSaving(true);
+    try {
+      await safeSet(`bess:${selectedDate}`, bessEntry);
+      await refreshHistory();
+      setToast("บันทึกข้อมูล BESS ของวันนี้แล้ว — ทีมทั้งหมดจะเห็นข้อมูลนี้");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveConfig = async () => {
+    setSaving(true);
+    try {
+      await safeSet("config:energy", config);
+      setToast("บันทึกการตั้งค่าพารามิเตอร์วิศวกรรมพลังงานแล้ว");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Quick-tick a single unit's status for a single day directly from the monthly grid.
+  const handleToggleCell = async (dateStr, category, unitCode) => {
+    const cellKey = `${dateStr}__${unitCode}`;
+    const current = monthEntries[dateStr] || emptyEntry();
+    const currentStatus = computeUnitStatus(category, unitCode, current);
+    const next = currentStatus === "ok" ? "fail" : currentStatus === "fail" ? "unchecked" : "ok";
+
+    const updated = {
+      ...current,
+      simpleStatus: { ...current.simpleStatus, [unitCode]: next === "unchecked" ? undefined : next },
+    };
+
+    setMonthEntries((prev) => ({ ...prev, [dateStr]: updated }));
+    setSavingCell(cellKey);
+    try {
+      await safeSet(`inspection:${dateStr}`, updated);
+      if (dateStr === selectedDate) setEntry(updated);
+      await refreshHistory();
+    } finally {
+      setSavingCell(null);
+    }
+  };
+
+  const dashboardScore = overallScore(latestEntry?.entry);
+  const dashboardLabel = healthLabel(dashboardScore);
+
+  const trendData = useMemo(
+    () =>
+      historyEntries.map((r) => ({
+        date: fmtShort(r.date),
+        health: r.entry ? overallScore(r.entry) : null,
+        pf: r.energy?.mainPf ? parseFloat(r.energy.mainPf) : null,
+      })),
+    [historyEntries]
+  );
+
+  const goInspect = () => {
+    setTab("inspect");
+    setInspectView("detail");
+    setOpenCats(Object.fromEntries(CATEGORIES.map((c) => [c.key, true])));
+  };
+
+  const gridCategory = CATEGORIES.find((c) => c.key === gridCategoryKey) || CATEGORIES[0];
+
+  const tabs = [
+    { key: "dashboard", label: "ภาพรวม", icon: LayoutDashboard },
+    { key: "inspect", label: "บันทึกผลตรวจ", icon: ClipboardList },
+    { key: "energy", label: "บันทึกพลังงาน", icon: MapPinned },
+    { key: "bess", label: "กักเก็บพลังงาน", icon: BatteryCharging },
+    { key: "plantdash", label: "แดชบอร์ดพลังงานโรงงาน", icon: Factory },
+    { key: "history", label: "ประวัติ/แนวโน้ม", icon: HistoryIcon },
+  ];
+
+  return (
+    <div className="min-h-screen w-full" style={{ backgroundColor: BG, fontFamily: "system-ui, -apple-system, sans-serif" }}>
+      <div style={{ background: `linear-gradient(135deg, ${NAVY} 0%, #123A5E 60%, #1B4670 100%)` }} className="text-white">
+        <div className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-3">
+            <div
+              className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 shadow-lg"
+              style={{ background: `linear-gradient(135deg, ${AMBER}, #D98A0F)`, color: NAVY }}
+            >
+              PJW
+            </div>
+            <div>
+              <h1 className="text-lg font-semibold leading-tight">ระบบติดตามสุขภาพยูทิลิตี้ &amp; พลังงาน</h1>
+              <p className="text-xs" style={{ color: "#9FB4C7" }}>Utility Health &amp; Energy Tracker — PJW Auto EV</p>
+            </div>
+          </div>
+          <ScoreRing score={dashboardScore} size={88} />
+        </div>
+        <div className="max-w-6xl mx-auto px-6 flex gap-1 border-t overflow-x-auto" style={{ borderColor: "#22405E" }}>
+          {tabs.map((t) => {
+            const Icon = t.icon;
+            const active = tab === t.key;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className="flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap flex-shrink-0"
+                style={{ borderColor: active ? AMBER : "transparent", color: active ? "#FFFFFF" : "#9FB4C7" }}
+              >
+                <Icon size={15} />
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-6 py-6">
+        {tab === "dashboard" && (
+          <DashboardTab
+            latestEntry={latestEntry}
+            latestEnergy={latestEnergy}
+            latestZoneEnergy={latestZoneEnergy}
+            dashboardScore={dashboardScore}
+            dashboardLabel={dashboardLabel}
+            trendData={trendData}
+            onGoInspect={goInspect}
+          />
+        )}
+
+        {tab === "inspect" && (
+          <div className="space-y-4">
+            <Card padded={false} className="flex gap-1 p-1.5 w-fit">
+              <button
+                onClick={() => setInspectView("detail")}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium"
+                style={inspectView === "detail" ? { backgroundColor: `${NAVY}0F`, color: NAVY } : { color: MUTED }}
+              >
+                <ClipboardList size={14} /> รายละเอียด/รายเครื่อง
+              </button>
+              <button
+                onClick={() => setInspectView("grid")}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium"
+                style={inspectView === "grid" ? { backgroundColor: `${NAVY}0F`, color: NAVY } : { color: MUTED }}
+              >
+                <CalendarDays size={14} /> ตารางรายเดือน
+              </button>
+            </Card>
+
+            {inspectView === "detail" ? (
+              <InspectTab
+                selectedDate={selectedDate}
+                setSelectedDate={setSelectedDate}
+                entry={entry}
+                setResult={setResult}
+                setSimpleStatus={setSimpleStatus}
+                setNote={setNote}
+                setValue={setValue}
+                openCats={openCats}
+                setOpenCats={setOpenCats}
+                onSave={handleSaveEntry}
+                saving={saving}
+                loading={loading}
+              />
+            ) : (
+              <MonthlyGridTab
+                year={gridYear}
+                month={gridMonth}
+                setYearMonth={setYearMonth}
+                category={gridCategory}
+                setCategoryKey={setGridCategoryKey}
+                monthEntries={monthEntries}
+                loading={monthLoading}
+                onToggleCell={handleToggleCell}
+                savingCell={savingCell}
+              />
+            )}
+          </div>
+        )}
+
+        {tab === "energy" && (
+          <EnergyEntryTab
+            selectedDate={selectedDate}
+            setSelectedDate={setSelectedDate}
+            energy={energy}
+            setEnergy={setEnergy}
+            zoneEnergy={zoneEnergy}
+            setZoneSystem={setZoneSystem}
+            setZonePf={setZonePf}
+            config={config}
+            setConfig={setConfig}
+            onSaveConfig={handleSaveConfig}
+            onSaveAll={handleSaveAllEnergy}
+            saving={saving}
+            loading={loading}
+          />
+        )}
+
+        {tab === "bess" && (
+          <BessTab
+            selectedDate={selectedDate}
+            setSelectedDate={setSelectedDate}
+            bessEntry={bessEntry}
+            setBessField={setBessField}
+            bessHistory={bessHistory}
+            onSave={handleSaveBess}
+            saving={saving}
+            loading={loading}
+          />
+        )}
+
+        {tab === "plantdash" && (
+          <PlantEnergyDashboard
+            zoneHistory={zoneEnergyHistory}
+            energyHistory={historyEntries}
+            config={config}
+          />
+        )}
+
+        {tab === "history" && <HistoryTab historyEntries={historyEntries} zoneEnergyHistory={zoneEnergyHistory} />}
+      </div>
+
+      {toast && <Toast message={toast} onDone={() => setToast(null)} />}
+    </div>
+  );
+}
+
+// ===========================================================================
+// Small floating toolbar for moving data between phones, since each phone
+// keeps its own separate localStorage copy (see storage polyfill above).
+// ===========================================================================
+function DataToolsBar() {
+  const [msg, setMsg] = useState(null);
+  const fileInputRef = React.useRef(null);
+
+  const handleExport = () => {
+    window.__pjwExportData();
+    setMsg("ส่งออกไฟล์สำรองข้อมูลแล้ว");
+    setTimeout(() => setMsg(null), 2500);
+  };
+
+  const handleImportClick = () => fileInputRef.current && fileInputRef.current.click();
+
+  const handleFileChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    window.__pjwImportData(file, (ok, count) => {
+      setMsg(ok ? `นำเข้าข้อมูล ${count} รายการแล้ว — กำลังโหลดใหม่...` : "ไฟล์ไม่ถูกต้อง นำเข้าไม่สำเร็จ");
+      if (ok) setTimeout(() => window.location.reload(), 900);
+      else setTimeout(() => setMsg(null), 2500);
+    });
+    e.target.value = "";
+  };
+
+  return (
+    <div style={{ position: "fixed", top: 8, right: 8, zIndex: 60, display: "flex", gap: 6, alignItems: "center" }}>
+      {msg && (
+        <span style={{ background: "#16232E", color: "#fff", fontSize: 11, padding: "4px 8px", borderRadius: 6 }}>
+          {msg}
+        </span>
+      )}
+      <button
+        onClick={handleExport}
+        title="ส่งออกข้อมูลของเครื่องนี้เป็นไฟล์ (สำหรับสำรอง/ย้ายไปเครื่องอื่น)"
+        style={{ background: "#FFFFFF", border: "1px solid #DCE2E8", borderRadius: 6, padding: "5px 8px", fontSize: 11, color: "#0F2942", boxShadow: "0 1px 2px rgba(0,0,0,0.1)" }}
+      >
+        ⬇︎ ส่งออก
+      </button>
+      <button
+        onClick={handleImportClick}
+        title="นำเข้าข้อมูลจากไฟล์สำรองที่ส่งออกไว้ก่อนหน้า"
+        style={{ background: "#FFFFFF", border: "1px solid #DCE2E8", borderRadius: 6, padding: "5px 8px", fontSize: 11, color: "#0F2942", boxShadow: "0 1px 2px rgba(0,0,0,0.1)" }}
+      >
+        ⬆︎ นำเข้า
+      </button>
+      <input ref={fileInputRef} type="file" accept="application/json" style={{ display: "none" }} onChange={handleFileChange} />
+    </div>
+  );
+}
+
+function AppWithDataTools() {
+  return (
+    <>
+      <DataToolsBar />
+      <UtilityHealthApp />
+    </>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<AppWithDataTools />);
+
+</script>
+</body>
+</html>
